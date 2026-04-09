@@ -25,12 +25,25 @@ reg [17:0] m;
 reg [16:0] c;
 
 always @(*) begin
-    case (F[23:22])   // 4 segments
-        2'b00: begin m = 18'd49481; c = 17'd65109; end
-        2'b01: begin m = 18'd58851; c = 17'd61864; end
-        2'b10: begin m = 18'd69983; c = 17'd56441; end
-        default: begin m = 18'd83233; c = 17'd51467; end
+    4-segment LPW (step = 0.25), kept here for reference:
+    case (F[23:22]) // top 2 bits of F determine the segment
+        2'b00: begin m = 18'd49667; c = 17'd65536; end
+        2'b01: begin m = 18'd59185; c = 17'd63074; end
+        2'b10: begin m = 18'd70426; c = 17'd57372; end
+        default: begin m = 18'd83873; c = 17'd47940; end
     endcase
+
+    // // 8-segment LPW (step = 0.125), select by the top 3 bits of F
+    // case (F[23:21])
+    //     3'b000: begin m = 18'd47452; c = 17'd65504; end
+    //     3'b001: begin m = 18'd51747; c = 17'd64964; end
+    //     3'b010: begin m = 18'd56430; c = 17'd63790; end
+    //     3'b011: begin m = 18'd61538; c = 17'd61871; end
+    //     3'b100: begin m = 18'd67107; c = 17'd59083; end
+    //     3'b101: begin m = 18'd73181; c = 17'd55283; end
+    //     3'b110: begin m = 18'd79805; c = 17'd50310; end
+    //     default: begin m = 18'd87028; c = 17'd43986; end
+    // endcase
 end
 
 // m * F : Q2.16 * Q0.24 = Q2.40
