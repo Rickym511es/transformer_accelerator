@@ -25,7 +25,7 @@ reg [17:0] m;
 reg [16:0] c;
 
 always @(*) begin
-    4-segment LPW (step = 0.25), kept here for reference:
+    // 4-segment LPW (step = 0.25), kept here for reference:
     case (F[23:22]) // top 2 bits of F determine the segment
         2'b00: begin m = 18'd49667; c = 17'd65536; end
         2'b01: begin m = 18'd59185; c = 17'd63074; end
@@ -100,3 +100,78 @@ generate
 endgenerate
 endmodule
 
+// Reciprocal dataflow for softmax normalization:
+// 1. Sum the 16 exponential outputs externally into data_in (UQ12.16).
+// 2. Normalize data_in = 2^e * u, where u is in [1, 2). 
+// 3. Approximate 1/u with a 4-segment LPW.
+// 4. Apply 2^-e to recover 1/data_in in Q1.16.
+// This datapath is lightweight; even with a clocked wrapper, it fits comfortably
+// within the 64-cycle budget mentioned for the reciprocal stage.
+module LPW_reciprocal(data_in, result);
+input  [27:0] data_in; //UQ12.16
+output reg [16:0] result; //Q1.16 since 1/1024 <= result <= 1.0
+
+localparam [16:0] ONE_Q16 = 17'd65536;
+localparam signed [19:0] ONE_Q16_EXT = 20'sd65536;
+
+// data_in = 2^e * u, u in [1, 2)
+reg [4:0] exp_shift;
+always @(*) begin
+    casex (data_in[27:16])
+        12'b1xxxxxxxxxxx: exp_shift = 5'd11;
+        12'b01xxxxxxxxxx: exp_shift = 5'd10;
+        12'b001xxxxxxxxx: exp_shift = 5'd9;
+        12'b0001xxxxxxxx: exp_shift = 5'd8;
+        12'b00001xxxxxxx: exp_shift = 5'd7;
+        12'b000001xxxxxx: exp_shift = 5'd6;
+        12'b0000001xxxxx: exp_shift = 5'd5;
+        12'b00000001xxxx: exp_shift = 5'd4;
+        12'b000000001xxx: exp_shift = 5'd3;
+        12'b0000000001xx: exp_shift = 5'd2;
+        12'b00000000001x: exp_shift = 5'd1;
+        default:          exp_shift = 5'd0;
+    endcase
+end
+
+wire [27:0] norm_full;
+wire [16:0] u_q16;
+assign norm_full = data_in >> exp_shift;
+assign u_q16 = (data_in == 28'd0) ? ONE_Q16 : norm_full[16:0];
+
+// 1/u ~= m*u + c, u in [1, 2)
+// m : signed Q2.16
+// c : signed Q2.16
+reg signed [17:0] m_recip;
+reg signed [17:0] c_recip;
+always @(*) begin
+    case (u_q16[15:14])
+        2'b00: begin m_recip = -18'sd52429; c_recip = 18'sd117965; end
+        2'b01: begin m_recip = -18'sd34931; c_recip = 18'sd96141;  end
+        2'b10: begin m_recip = -18'sd24969; c_recip = 18'sd81134;  end
+        default: begin m_recip = -18'sd18743; c_recip = 18'sd70189; end
+    endcase
+end
+
+wire signed [17:0] u_ext_q16;
+wire signed [35:0] recip_mult_full;
+wire signed [19:0] recip_mult_q16;
+wire signed [19:0] recip_u_q16;
+wire signed [19:0] recip_full_q16;
+
+assign u_ext_q16 = $signed({1'b0, u_q16});
+assign recip_mult_full = m_recip * u_ext_q16; // Q2.16 * Q2.16 = Q4.32
+assign recip_mult_q16 = recip_mult_full >>> 16;
+assign recip_u_q16 = recip_mult_q16 + c_recip;
+assign recip_full_q16 = recip_u_q16 >>> exp_shift;
+
+always @(*) begin
+    if (data_in == 28'd0)
+        result = 17'd0;
+    else if (recip_full_q16 <= 20'sd0)
+        result = 17'd0;
+    else if (recip_full_q16 >= ONE_Q16_EXT)
+        result = ONE_Q16;
+    else
+        result = recip_full_q16[16:0];
+end
+endmodule
