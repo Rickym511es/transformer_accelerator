@@ -1,3 +1,46 @@
+// Max finder for 16 signed Q16.24 values packed into 16*40 bits.
+// A balanced compare tree keeps the combinational depth low.
+module vec_max(data_in_vec, max_value);
+input  signed [16*40-1:0] data_in_vec;
+output signed [39:0]      max_value;
+
+wire signed [39:0] x0  = $signed(data_in_vec[  0 +: 40]);
+wire signed [39:0] x1  = $signed(data_in_vec[ 40 +: 40]);
+wire signed [39:0] x2  = $signed(data_in_vec[ 80 +: 40]);
+wire signed [39:0] x3  = $signed(data_in_vec[120 +: 40]);
+wire signed [39:0] x4  = $signed(data_in_vec[160 +: 40]);
+wire signed [39:0] x5  = $signed(data_in_vec[200 +: 40]);
+wire signed [39:0] x6  = $signed(data_in_vec[240 +: 40]);
+wire signed [39:0] x7  = $signed(data_in_vec[280 +: 40]);
+wire signed [39:0] x8  = $signed(data_in_vec[320 +: 40]);
+wire signed [39:0] x9  = $signed(data_in_vec[360 +: 40]);
+wire signed [39:0] x10 = $signed(data_in_vec[400 +: 40]);
+wire signed [39:0] x11 = $signed(data_in_vec[440 +: 40]);
+wire signed [39:0] x12 = $signed(data_in_vec[480 +: 40]);
+wire signed [39:0] x13 = $signed(data_in_vec[520 +: 40]);
+wire signed [39:0] x14 = $signed(data_in_vec[560 +: 40]);
+wire signed [39:0] x15 = $signed(data_in_vec[600 +: 40]);
+
+wire signed [39:0] s1_0 = (x0  > x1)  ? x0  : x1;
+wire signed [39:0] s1_1 = (x2  > x3)  ? x2  : x3;
+wire signed [39:0] s1_2 = (x4  > x5)  ? x4  : x5;
+wire signed [39:0] s1_3 = (x6  > x7)  ? x6  : x7;
+wire signed [39:0] s1_4 = (x8  > x9)  ? x8  : x9;
+wire signed [39:0] s1_5 = (x10 > x11) ? x10 : x11;
+wire signed [39:0] s1_6 = (x12 > x13) ? x12 : x13;
+wire signed [39:0] s1_7 = (x14 > x15) ? x14 : x15;
+
+wire signed [39:0] s2_0 = (s1_0 > s1_1) ? s1_0 : s1_1;
+wire signed [39:0] s2_1 = (s1_2 > s1_3) ? s1_2 : s1_3;
+wire signed [39:0] s2_2 = (s1_4 > s1_5) ? s1_4 : s1_5;
+wire signed [39:0] s2_3 = (s1_6 > s1_7) ? s1_6 : s1_7;
+
+wire signed [39:0] s3_0 = (s2_0 > s2_1) ? s2_0 : s2_1;
+wire signed [39:0] s3_1 = (s2_2 > s2_3) ? s2_2 : s2_3;
+
+assign max_value = (s3_0 > s3_1) ? s3_0 : s3_1;
+endmodule
+
 module LPW_expo(data_in, max, result);
 input  signed [39:0] data_in; //Q16.24
 input  signed [39:0] max;     //Q16.24
@@ -83,23 +126,6 @@ always @(*) begin
 end
 endmodule
 
-module LPW_expo_16(data_in_vec, max,result_vec);
-input  [16*40-1:0] data_in_vec;   // 16 x Q16.24
-input  [39:0]      max;           // common max for this row
-output [16*17-1:0] result_vec;    // 16 x Q1.16
-
-genvar i;
-generate
-    for (i=0; i<16; i=i+1) begin : GEN_EXPO
-        LPW_expo u_LPW_expo (
-            .data_in (data_in_vec[i*40 +: 40]),
-            .max     (max),
-            .result  (result_vec[i*17 +: 17])
-        );
-    end
-endgenerate
-endmodule
-
 // Reciprocal dataflow for softmax normalization:
 // 1. Sum the 16 exponential outputs externally into data_in (UQ12.16).
 // 2. Normalize data_in = 2^e * u, where u is in [1, 2). 
@@ -175,3 +201,4 @@ always @(*) begin
         result = recip_full_q16[16:0];
 end
 endmodule
+
