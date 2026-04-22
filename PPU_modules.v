@@ -1,78 +1,37 @@
-// No need of valid/busy signals since the time of PMS not exceeds the time of MAC
-// The output of PMS is directly fed into the next stage without buffering
-module PMS(MAC_result, scale, PMS_result, clk, rst_n, done); 
-input clk, rst_n;
+`timescale 1ns/1ps
+// PMS is now a combinational stage.
+// It divides each 24-bit integer input value by 8 and encodes the result as Q24.16.
+// scale is kept in the port list for interface compatibility.
+module PMS(MAC_result, scale, PMS_result); 
 input signed [383:0] MAC_result;
-input [255:0] scale;
+input [255:0] scale; // kept for interface compatibility
 output reg signed [639:0] PMS_result; 
-output reg done;
+integer i;
 
-reg [2:0] counter;
-wire signed [23:0] mac0, mac1;
-wire        [15:0] sc0,  sc1;
-wire signed [39:0] prod0, prod1;
-
-assign mac0 = MAC_result[(counter*2)*24 +: 24];
-assign mac1 = MAC_result[(counter*2+1)*24 +: 24];
-
-assign sc0  = scale[(counter*2)*16 +: 16];
-assign sc1  = scale[(counter*2+1)*16 +: 16];
-
-assign prod0 = mac0 * sc0;
-assign prod1 = mac1 * sc1;
-
-always@(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-        counter <= 3'd0;
-        PMS_result  <= 640'sd0;
-        done    <= 1'b0;
-    end
-    else begin
-        PMS_result[((counter*2)*40)   +: 40] <= prod0;
-        PMS_result[((counter*2+1)*40) +: 40] <= prod1;
-        if (counter < 3'd7)
-            counter <= counter + 3'd1;
-        else begin
-            counter <= 3'd0;
-            done    <= 1'b1;
-        end
+always @(*) begin
+    PMS_result = 640'sd0;
+    for (i = 0; i < 16; i = i + 1) begin
+        PMS_result[i*40 +: 40] = $signed({{16{MAC_result[i*24+23]}}, MAC_result[i*24 +: 24]}) <<< 13;
     end
 end
 endmodule
 
-module BA(PMS_result, bias, clk, rst_n, BA_result, done);
+// BA is now a combinational stage.
+// It adds signed Q4.4 bias values to 16 packed 40-bit inputs.
+module BA(PMS_result, bias, BA_result);
 input  signed [639:0] PMS_result;
 input  signed [127:0] bias;
-input  clk, rst_n;
 output reg signed [639:0] BA_result;
-output reg done;
 
-reg [2:0] counter;  
-wire signed [39:0] bias_ext0, bias_ext1;
+integer i;
 
-assign bias_ext0 = $signed(bias[(counter*2)*8 +: 8]) <<< 12;
-assign bias_ext1 = $signed(bias[(counter*2+1)*8 +: 8]) <<< 12;
-
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        counter    <= 3'd0;
-        BA_result  <= 640'sd0;
-        done       <= 1'b0;
-    end
-    else begin
-        BA_result[(counter*2)*40 +: 40]
-            <= PMS_result[(counter*2)*40 +: 40] + bias_ext0;
-        BA_result[(counter*2+1)*40 +: 40]
-            <= PMS_result[(counter*2+1)*40 +: 40] + bias_ext1;
-        if (counter < 3'd7) begin
-            counter <= counter + 3'd1;
-        end
-        else begin
-            counter <= 3'd0;
-            done    <= 1'b1;
-        end
+always @(*) begin
+    BA_result = 640'sd0;
+    for (i = 0; i < 16; i = i + 1) begin
+        BA_result[i*40 +: 40] = $signed(PMS_result[i*40 +: 40]) + ($signed({{32{bias[i*8+7]}}, bias[i*8 +: 8]}) <<< 12);
     end
 end
+
 endmodule
 
 module ReLU(BA_result, ReLU_result);
@@ -91,14 +50,4 @@ always @(*) begin
             ReLU_result[i*40 +: 40] = temp;
     end
 end
-endmodule
-
-// part1 : per-matrix scaling + bias addition + ReLU
-// fixed-point representation here
-module part1(MAC_result, scale, bias, result, clk, rst_n);
-input clk, rst_n;
-input signed [383:0] MAC_result; // 16 x 24b
-input [255:0] scale;             // 16 x 16b, Q0.16
-input signed [127:0] bias;       // 16 x 8b, Q4.4
-output reg signed [639:0] result; // 16 x 40b, Q23.16
 endmodule
