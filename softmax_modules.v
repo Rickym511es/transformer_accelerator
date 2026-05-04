@@ -198,6 +198,94 @@ always @(*) begin
 end
 endmodule
 
+/*
+DISCARD: constant_estimation_reciprocal is kept only as a reference.
+module constant_estimation_reciprocal(data_in, result);
+input  [27:0] data_in; // UQ12.16
+output reg [16:0] result; // Q1.16
+
+localparam [16:0] ONE_Q16 = 17'd65536;
+
+// data_in = 2^e * u, u in [1, 2)
+reg [4:0] exp_shift;
+always @(*) begin
+    casex (data_in[27:16])
+        12'b1xxxxxxxxxxx: exp_shift = 5'd11;
+        12'b01xxxxxxxxxx: exp_shift = 5'd10;
+        12'b001xxxxxxxxx: exp_shift = 5'd9;
+        12'b0001xxxxxxxx: exp_shift = 5'd8;
+        12'b00001xxxxxxx: exp_shift = 5'd7;
+        12'b000001xxxxxx: exp_shift = 5'd6;
+        12'b0000001xxxxx: exp_shift = 5'd5;
+        12'b00000001xxxx: exp_shift = 5'd4;
+        12'b000000001xxx: exp_shift = 5'd3;
+        12'b0000000001xx: exp_shift = 5'd2;
+        12'b00000000001x: exp_shift = 5'd1;
+        default:          exp_shift = 5'd0;
+    endcase
+end
+
+wire [27:0] norm_full;
+wire [16:0] u_q16;
+wire [4:0]  frac_seg;
+reg  [16:0] recip_u_q16;
+wire [16:0] recip_full_q16;
+
+assign norm_full = data_in >> exp_shift;
+assign u_q16 = (data_in == 28'd0) ? ONE_Q16 : norm_full[16:0];
+assign frac_seg = u_q16[15:11];
+
+// 32-segment midpoint constant estimation of 1/u.
+always @(*) begin
+    case (frac_seg)
+        5'd0:  recip_u_q16 = 17'd64528;
+        5'd1:  recip_u_q16 = 17'd62602;
+        5'd2:  recip_u_q16 = 17'd60787;
+        5'd3:  recip_u_q16 = 17'd59075;
+        5'd4:  recip_u_q16 = 17'd57456;
+        5'd5:  recip_u_q16 = 17'd55924;
+        5'd6:  recip_u_q16 = 17'd54471;
+        5'd7:  recip_u_q16 = 17'd53092;
+        5'd8:  recip_u_q16 = 17'd51782;
+        5'd9:  recip_u_q16 = 17'd50534;
+        5'd10: recip_u_q16 = 17'd49345;
+        5'd11: recip_u_q16 = 17'd48210;
+        5'd12: recip_u_q16 = 17'd47127;
+        5'd13: recip_u_q16 = 17'd46091;
+        5'd14: recip_u_q16 = 17'd45100;
+        5'd15: recip_u_q16 = 17'd44151;
+        5'd16: recip_u_q16 = 17'd43240;
+        5'd17: recip_u_q16 = 17'd42367;
+        5'd18: recip_u_q16 = 17'd41528;
+        5'd19: recip_u_q16 = 17'd40721;
+        5'd20: recip_u_q16 = 17'd39946;
+        5'd21: recip_u_q16 = 17'd39199;
+        5'd22: recip_u_q16 = 17'd38480;
+        5'd23: recip_u_q16 = 17'd37787;
+        5'd24: recip_u_q16 = 17'd37118;
+        5'd25: recip_u_q16 = 17'd36472;
+        5'd26: recip_u_q16 = 17'd35849;
+        5'd27: recip_u_q16 = 17'd35246;
+        5'd28: recip_u_q16 = 17'd34664;
+        5'd29: recip_u_q16 = 17'd34100;
+        5'd30: recip_u_q16 = 17'd33554;
+        default: recip_u_q16 = 17'd33026;
+    endcase
+end
+
+assign recip_full_q16 = recip_u_q16 >> exp_shift;
+
+always @(*) begin
+    if (data_in == 28'd0)
+        result = 17'd0;
+    else
+        result = recip_full_q16;
+end
+endmodule
+*/
+
+/*
+DISCARD: constant_estimation_expo is kept only as a reference.
 module constant_estimation_expo(data_in, max, result);
 input  signed [39:0] data_in; // Q16.24
 input  signed [39:0] max;     // Q16.24
@@ -272,4 +360,5 @@ always @(*) begin
         result = exp_full[16:0];
 end
 endmodule
+*/
 
