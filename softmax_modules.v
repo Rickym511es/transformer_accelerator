@@ -68,25 +68,17 @@ reg [17:0] m;
 reg [16:0] c;
 
 always @(*) begin
-    // 4-segment LPW (step = 0.25), kept here for reference:
-    case (F[23:22]) // top 2 bits of F determine the segment
-        2'b00: begin m = 18'd49667; c = 17'd65536; end
-        2'b01: begin m = 18'd59185; c = 17'd63074; end
-        2'b10: begin m = 18'd70426; c = 17'd57372; end
-        default: begin m = 18'd83873; c = 17'd47940; end
+    // 8-segment LPW (step = 0.125), select by the top 3 bits of F.
+    case (F[23:21])
+        3'b000: begin m = 18'd47452; c = 17'd65504; end
+        3'b001: begin m = 18'd51747; c = 17'd64964; end
+        3'b010: begin m = 18'd56430; c = 17'd63790; end
+        3'b011: begin m = 18'd61538; c = 17'd61871; end
+        3'b100: begin m = 18'd67107; c = 17'd59083; end
+        3'b101: begin m = 18'd73181; c = 17'd55283; end
+        3'b110: begin m = 18'd79805; c = 17'd50310; end
+        default: begin m = 18'd87028; c = 17'd43986; end
     endcase
-
-    // // 8-segment LPW (step = 0.125), select by the top 3 bits of F
-    // case (F[23:21])
-    //     3'b000: begin m = 18'd47452; c = 17'd65504; end
-    //     3'b001: begin m = 18'd51747; c = 17'd64964; end
-    //     3'b010: begin m = 18'd56430; c = 17'd63790; end
-    //     3'b011: begin m = 18'd61538; c = 17'd61871; end
-    //     3'b100: begin m = 18'd67107; c = 17'd59083; end
-    //     3'b101: begin m = 18'd73181; c = 17'd55283; end
-    //     3'b110: begin m = 18'd79805; c = 17'd50310; end
-    //     default: begin m = 18'd87028; c = 17'd43986; end
-    // endcase
 end
 
 // m * F : Q2.16 * Q0.24 = Q2.40
@@ -129,7 +121,7 @@ endmodule
 // Reciprocal dataflow for softmax normalization:
 // 1. Sum the 16 exponential outputs externally into data_in (UQ12.16).
 // 2. Normalize data_in = 2^e * u, where u is in [1, 2). 
-// 3. Approximate 1/u with a 4-segment LPW.
+// 3. Approximate 1/u with an 8-segment LPW.
 // 4. Apply 2^-e to recover 1/data_in in Q1.16.
 // This datapath is lightweight; even with a clocked wrapper, it fits comfortably
 // within the 64-cycle budget mentioned for the reciprocal stage.
@@ -170,11 +162,15 @@ assign u_q16 = (data_in == 28'd0) ? ONE_Q16 : norm_full[16:0];
 reg signed [17:0] m_recip;
 reg signed [17:0] c_recip;
 always @(*) begin
-    case (u_q16[15:14])
-        2'b00: begin m_recip = -18'sd52429; c_recip = 18'sd117965; end
-        2'b01: begin m_recip = -18'sd34931; c_recip = 18'sd96141;  end
-        2'b10: begin m_recip = -18'sd24969; c_recip = 18'sd81134;  end
-        default: begin m_recip = -18'sd18743; c_recip = 18'sd70189; end
+    case (u_q16[15:13])
+        3'b000: begin m_recip = -18'sd58254; c_recip = 18'sd123790; end
+        3'b001: begin m_recip = -18'sd46603; c_recip = 18'sd110683; end
+        3'b010: begin m_recip = -18'sd38130; c_recip = 18'sd100091; end
+        3'b011: begin m_recip = -18'sd31775; c_recip = 18'sd91353;  end
+        3'b100: begin m_recip = -18'sd26887; c_recip = 18'sd84021;  end
+        3'b101: begin m_recip = -18'sd23046; c_recip = 18'sd77779;  end
+        3'b110: begin m_recip = -18'sd19973; c_recip = 18'sd72402;  end
+        default: begin m_recip = -18'sd17476; c_recip = 18'sd67721; end
     endcase
 end
 
@@ -199,6 +195,81 @@ always @(*) begin
         result = ONE_Q16;
     else
         result = recip_full_q16[16:0];
+end
+endmodule
+
+module constant_estimation_expo(data_in, max, result);
+input  signed [39:0] data_in; // Q16.24
+input  signed [39:0] max;     // Q16.24
+output reg    [16:0] result;  // Q1.16
+
+localparam [16:0] ONE_Q16 = 17'd65536;
+
+wire signed [39:0] diff;
+assign diff = data_in - max;
+
+wire signed [15:0] I;
+wire        [23:0] F;
+assign I = diff[39:24];
+assign F = diff[23:0];
+
+// 32-segment midpoint constant estimation of 2^F.
+wire [4:0] frac_seg;
+reg  [17:0] exp_frac;
+assign frac_seg = F[23:19];
+
+always @(*) begin
+    case (frac_seg)
+        5'd0:  exp_frac = 18'd66250;
+        5'd1:  exp_frac = 18'd67700;
+        5'd2:  exp_frac = 18'd69183;
+        5'd3:  exp_frac = 18'd70698;
+        5'd4:  exp_frac = 18'd72246;
+        5'd5:  exp_frac = 18'd73828;
+        5'd6:  exp_frac = 18'd75444;
+        5'd7:  exp_frac = 18'd77096;
+        5'd8:  exp_frac = 18'd78785;
+        5'd9:  exp_frac = 18'd80510;
+        5'd10: exp_frac = 18'd82273;
+        5'd11: exp_frac = 18'd84074;
+        5'd12: exp_frac = 18'd85915;
+        5'd13: exp_frac = 18'd87796;
+        5'd14: exp_frac = 18'd89719;
+        5'd15: exp_frac = 18'd91684;
+        5'd16: exp_frac = 18'd93691;
+        5'd17: exp_frac = 18'd95743;
+        5'd18: exp_frac = 18'd97839;
+        5'd19: exp_frac = 18'd99982;
+        5'd20: exp_frac = 18'd102171;
+        5'd21: exp_frac = 18'd104408;
+        5'd22: exp_frac = 18'd106694;
+        5'd23: exp_frac = 18'd109031;
+        5'd24: exp_frac = 18'd111418;
+        5'd25: exp_frac = 18'd113858;
+        5'd26: exp_frac = 18'd116351;
+        5'd27: exp_frac = 18'd118899;
+        5'd28: exp_frac = 18'd121502;
+        5'd29: exp_frac = 18'd124163;
+        5'd30: exp_frac = 18'd126882;
+        default: exp_frac = 18'd129660;
+    endcase
+end
+
+wire [15:0] neg_i_mag;
+wire [4:0]  shift_amt;
+wire [17:0] exp_full;
+
+assign neg_i_mag = ~I + 16'd1;
+assign shift_amt = (!diff[39]) ? 5'd0 : ((|neg_i_mag[15:5]) || (neg_i_mag[4:0] > 5'd18)) ? 5'd18 : neg_i_mag[4:0];
+assign exp_full = exp_frac >> shift_amt;
+
+always @(*) begin
+    if (!diff[39])
+        result = ONE_Q16;
+    else if (exp_full >= {1'b0, ONE_Q16})
+        result = ONE_Q16;
+    else
+        result = exp_full[16:0];
 end
 endmodule
 

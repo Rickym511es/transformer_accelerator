@@ -52,9 +52,11 @@ initial begin
     mean_loss_pct     = 0.0;
     max_loss_pct      = 0.0;
 
-    vec_fd = $fopen("lpw_reciprocal_vectors.txt", "r");
+    vec_fd = $fopen("testbench/testcase/lpw_reciprocal_vectors.txt", "r");
+    if (vec_fd == 0)
+        vec_fd = $fopen("testcase/lpw_reciprocal_vectors.txt", "r");
     if (vec_fd == 0) begin
-        $display("ERROR: cannot open lpw_reciprocal_vectors.txt");
+        $display("ERROR: cannot open lpw_reciprocal_vectors.txt in testbench/testcase or testcase");
         $display("Each line should be: <data_in_uq12.16_hex> <golden_real>");
         $finish;
     end
@@ -95,7 +97,7 @@ initial begin
             $display("PREC case=%0d data=%0.8f result=%0.8f golden=%0.8f loss=%0.8f abs_loss=%0.8f loss_pct=%0.4f%%",
                      case_count, data_real, result_real, golden_real, loss_real, abs_loss_real, loss_pct);
             $display("DEBUG case=%0d exp_shift=%0d u=%0.8f seg=%0d recip_u=%0.8f result_q16=%0d",
-                     case_count, exp_shift_dbg, u_real, dut.u_q16[15:14], recip_u_real, result_q16_dbg);
+                     case_count, exp_shift_dbg, u_real, dut.u_q16[15:13], recip_u_real, result_q16_dbg);
         end
     end
 
