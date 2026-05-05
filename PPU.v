@@ -5,17 +5,26 @@ module PPU(
     rst_n,
     valid,
     mac_result_vec,
-    bias
+    bias,
+    path2_valid,
+    softmax_valid,
+    softmax_result_vec
 );
 input clk;
 input rst_n;
 input valid;
 input signed [16*24-1:0] mac_result_vec;
 input signed [16*8-1:0] bias;
+input path2_valid;
+output reg softmax_valid;
+output reg [16*17-1:0] softmax_result_vec;
 
 localparam signed [39:0] MAX_Q16_24 = 40'sh7fffffffff;
 localparam signed [47:0] MAX_Q16_24_EXT = 48'sh007fffffffff;
 localparam [27:0] SUM_SAT = 28'hfffffff;
+localparam [16:0] ONE_Q16 = 17'd65536;
+localparam [3:0] LAST_ROW = 4'd15;
+localparam [5:0] LAST_TILE = 6'd63;
 
 wire signed [16*40-1:0] pms_result;
 wire signed [16*40-1:0] ba_result;
@@ -31,8 +40,25 @@ reg [27:0] exp_sum;
 wire [27:0] previous_sum;
 wire [27:0] previous_sum_adjusted;
 wire [27:0] sum_value;
+wire signed [39:0] path2_max_value;
+wire [27:0] path2_sum_value;
+wire [16*17-1:0] path2_exp_result_vec;
+wire [16:0] path2_reciprocal;
+wire [16*34-1:0] path2_mult_full_vec;
+wire [16*18-1:0] path2_mult_q16_vec;
+wire [16*17-1:0] path2_softmax_comb;
+wire path1_fire;
+wire path2_fire;
+wire path1_row_last;
+wire path2_row_last;
+wire path1_tile_last;
+wire path2_tile_last;
+wire path2_complete;
 
 reg [3:0] row_counter;
+reg [3:0] path2_row_counter;
+reg [5:0] tile_counter;
+reg [5:0] path2_tile_counter;
 reg signed [39:0] max_buffer [0:15];
 reg [27:0] sum_buffer [0:15];
 
@@ -106,22 +132,95 @@ assign previous_sum_adjusted = previous_sum_adjusted_wide[28] ? SUM_SAT : previo
 assign sum_value_wide = {1'b0, previous_sum_adjusted} + {1'b0, exp_sum};
 assign sum_value = sum_value_wide[28] ? SUM_SAT : sum_value_wide[27:0];
 
+// valid streams path1. path2_valid replays the same 64 tiles through path2.
+assign path1_fire = valid && !path2_valid;
+assign path2_fire = path2_valid;
+assign path1_row_last = (row_counter == LAST_ROW);
+assign path2_row_last = (path2_row_counter == LAST_ROW);
+assign path1_tile_last = (tile_counter == LAST_TILE);
+assign path2_tile_last = (path2_tile_counter == LAST_TILE);
+assign path2_complete = path2_fire && path2_row_last && path2_tile_last;
+
+assign path2_max_value = max_buffer[path2_row_counter];
+assign path2_sum_value = sum_buffer[path2_row_counter];
+
+LPW_reciprocal path2_reciprocal_inst (
+    .data_in(path2_sum_value),
+    .result (path2_reciprocal)
+);
+
+genvar path2_i;
+generate
+    for (path2_i = 0; path2_i < 16; path2_i = path2_i + 1) begin : PATH2_LANE
+        LPW_expo path2_exp_inst (
+            .data_in(softmax_input[path2_i*40 +: 40]),
+            .max    (path2_max_value),
+            .result (path2_exp_result_vec[path2_i*17 +: 17])
+        );
+
+        assign path2_mult_full_vec[path2_i*34 +: 34] = path2_exp_result_vec[path2_i*17 +: 17] * path2_reciprocal;
+        assign path2_mult_q16_vec[path2_i*18 +: 18] = path2_mult_full_vec[path2_i*34 +: 34] >> 16;
+        assign path2_softmax_comb[path2_i*17 +: 17] = path2_mult_q16_vec[path2_i*18+17] ? ONE_Q16 : path2_mult_q16_vec[path2_i*18 +: 17];
+    end
+endgenerate
+
 integer rst_i;
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         row_counter <= 4'd0;
+        path2_row_counter <= 4'd0;
+        tile_counter <= 6'd0;
+        path2_tile_counter <= 6'd0;
+        softmax_valid <= 1'b0;
+        softmax_result_vec <= {16*17{1'b0}};
         for (rst_i = 0; rst_i < 16; rst_i = rst_i + 1) begin
             max_buffer[rst_i] <= 40'sd0;
             sum_buffer[rst_i] <= 28'd0;
         end
     end
-    else if (valid) begin
-        max_buffer[row_counter] <= max_value;
-        sum_buffer[row_counter] <= sum_value;
-        if (row_counter == 4'd15)
+    else begin
+        softmax_valid <= 1'b0;
+
+        if (path1_fire) begin
+            max_buffer[row_counter] <= max_value;
+            sum_buffer[row_counter] <= sum_value;
+            if (path1_row_last) begin
+                row_counter <= 4'd0;
+                if (path1_tile_last)
+                    tile_counter <= 6'd0;
+                else
+                    tile_counter <= tile_counter + 6'd1;
+            end
+            else begin
+                row_counter <= row_counter + 4'd1;
+            end
+        end
+
+        if (path2_fire) begin
+            softmax_result_vec <= path2_softmax_comb;
+            softmax_valid <= 1'b1;
+            if (path2_row_last) begin
+                path2_row_counter <= 4'd0;
+                if (path2_tile_last)
+                    path2_tile_counter <= 6'd0;
+                else
+                    path2_tile_counter <= path2_tile_counter + 6'd1;
+            end
+            else begin
+                path2_row_counter <= path2_row_counter + 4'd1;
+            end
+        end
+
+        if (path2_complete) begin
             row_counter <= 4'd0;
-        else
-            row_counter <= row_counter + 4'd1;
+            path2_row_counter <= 4'd0;
+            tile_counter <= 6'd0;
+            path2_tile_counter <= 6'd0;
+            for (rst_i = 0; rst_i < 16; rst_i = rst_i + 1) begin
+                max_buffer[rst_i] <= 40'sd0;
+                sum_buffer[rst_i] <= 28'd0;
+            end
+        end
     end
 end
 endmodule
