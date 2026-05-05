@@ -1,5 +1,8 @@
 `timescale 1ns/1ps
-// Example:
+// Generate testcase first:
+// python testbench/generate_ppu_cases.py
+//
+// Run example:
 // iverilog -g2012 -o tb_PPU.vvp PPU_modules.v softmax_modules.v PPU.v testbench/tb_PPU.v
 // vvp tb_PPU.vvp
 
@@ -10,7 +13,7 @@ parameter TILES = 64;
 parameter LANES = 16;
 parameter TOTAL_VALUES = ROWS * TILES * LANES;
 parameter PRINT_EVERY_RESULT = 0;
-parameter CHECK_NUMERIC_LIMITS = 1;
+parameter CHECK_LOSS_LIMITS = 1;
 parameter MAX_ABS_LOSS_LIMIT = 0.001000;
 parameter ROW_SUM_LOSS_LIMIT = 0.025000;
 
@@ -20,17 +23,14 @@ reg valid;
 reg path2_valid;
 reg signed [16*24-1:0] mac_result_vec;
 reg signed [16*8-1:0] bias;
+reg signed [16*40-1:0] score_input_vec;
 
 wire softmax_valid;
 wire [16*17-1:0] softmax_result_vec;
 
-integer mac_mem [0:TOTAL_VALUES-1];
-integer bias_mem [0:TILES*LANES-1];
-real relu_real [0:TOTAL_VALUES-1];
+real score_real [0:TOTAL_VALUES-1];
 real golden_softmax [0:TOTAL_VALUES-1];
-real observed_softmax [0:TOTAL_VALUES-1];
 real row_max_real [0:ROWS-1];
-real row_sum_real [0:ROWS-1];
 real row_output_sum [0:ROWS-1];
 real row_abs_loss_sum [0:ROWS-1];
 real row_sq_loss_sum [0:ROWS-1];
@@ -38,6 +38,7 @@ real row_max_abs_loss [0:ROWS-1];
 
 integer error_count;
 integer output_count;
+integer testcase_count;
 integer worst_row;
 integer worst_tile;
 integer worst_lane;
@@ -74,14 +75,6 @@ function integer value_idx;
     end
 endfunction
 
-function integer bias_idx;
-    input integer tile_idx;
-    input integer lane_idx;
-    begin
-        bias_idx = tile_idx * LANES + lane_idx;
-    end
-endfunction
-
 function real abs_real;
     input real value;
     begin
@@ -92,24 +85,10 @@ function real abs_real;
     end
 endfunction
 
-function real exp2_real;
-    input real value;
-    begin
-        exp2_real = 2.0 ** value;
-    end
-endfunction
-
 function real q16_to_real;
     input [16:0] value;
     begin
         q16_to_real = value / 65536.0;
-    end
-endfunction
-
-function real uq16_to_real;
-    input [27:0] value;
-    begin
-        uq16_to_real = value / 65536.0;
     end
 endfunction
 
@@ -120,96 +99,103 @@ function real q24_to_real;
     end
 endfunction
 
-task build_vectors;
+function signed [39:0] real_to_q24;
+    input real value;
+    begin
+        real_to_q24 = $rtoi(value * 16777216.0);
+    end
+endfunction
+
+task init_arrays;
     integer row_idx;
-    integer tile_idx;
-    integer lane_idx;
     integer idx;
-    integer bidx;
-    real value_real;
-    real exp_value;
     begin
         for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
             row_max_real[row_idx] = -1.0e30;
-            row_sum_real[row_idx] = 0.0;
             row_output_sum[row_idx] = 0.0;
             row_abs_loss_sum[row_idx] = 0.0;
             row_sq_loss_sum[row_idx] = 0.0;
             row_max_abs_loss[row_idx] = 0.0;
         end
 
-        for (tile_idx = 0; tile_idx < TILES; tile_idx = tile_idx + 1) begin
-            for (lane_idx = 0; lane_idx < LANES; lane_idx = lane_idx + 1) begin
-                bidx = bias_idx(tile_idx, lane_idx);
-                bias_mem[bidx] = ((tile_idx * 3 + lane_idx * 5 + 7) % 17) - 8;
-            end
-        end
-
-        for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
-            for (tile_idx = 0; tile_idx < TILES; tile_idx = tile_idx + 1) begin
-                for (lane_idx = 0; lane_idx < LANES; lane_idx = lane_idx + 1) begin
-                    idx = value_idx(row_idx, tile_idx, lane_idx);
-                    bidx = bias_idx(tile_idx, lane_idx);
-                    mac_mem[idx] = ((tile_idx * 7 + row_idx * 11 + lane_idx * 13 + (tile_idx / 3) * 5) % 65) - 24;
-
-                    if (((tile_idx + row_idx + lane_idx) % 29) == 0)
-                        mac_mem[idx] = mac_mem[idx] - 20;
-                    if (((tile_idx * row_idx + lane_idx) % 37) == 0)
-                        mac_mem[idx] = mac_mem[idx] + 12;
-
-                    value_real = (mac_mem[idx] / 8.0) + (bias_mem[bidx] / 16.0);
-                    if (value_real < 0.0)
-                        value_real = 0.0;
-
-                    relu_real[idx] = value_real;
-                    observed_softmax[idx] = 0.0;
-                    if (value_real > row_max_real[row_idx])
-                        row_max_real[row_idx] = value_real;
-                end
-            end
-        end
-
-        for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
-            for (tile_idx = 0; tile_idx < TILES; tile_idx = tile_idx + 1) begin
-                for (lane_idx = 0; lane_idx < LANES; lane_idx = lane_idx + 1) begin
-                    idx = value_idx(row_idx, tile_idx, lane_idx);
-                    row_sum_real[row_idx] = row_sum_real[row_idx] + exp2_real(relu_real[idx] - row_max_real[row_idx]);
-                end
-            end
-        end
-
-        for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
-            for (tile_idx = 0; tile_idx < TILES; tile_idx = tile_idx + 1) begin
-                for (lane_idx = 0; lane_idx < LANES; lane_idx = lane_idx + 1) begin
-                    idx = value_idx(row_idx, tile_idx, lane_idx);
-                    exp_value = exp2_real(relu_real[idx] - row_max_real[row_idx]);
-                    golden_softmax[idx] = exp_value / row_sum_real[row_idx];
-                end
-            end
+        for (idx = 0; idx < TOTAL_VALUES; idx = idx + 1) begin
+            score_real[idx] = 0.0;
+            golden_softmax[idx] = 0.0;
         end
     end
 endtask
 
-task drive_input;
+task load_testcase;
+    integer fd;
+    integer scan_count;
+    integer row_idx;
+    integer tile_idx;
+    integer lane_idx;
+    integer idx;
+    real score_value;
+    real golden_value;
+    begin
+        testcase_count = 0;
+        init_arrays;
+
+        fd = $fopen("testbench/testcase/ppu_cases.txt", "r");
+        if (fd == 0)
+            fd = $fopen("testcase/ppu_cases.txt", "r");
+        if (fd == 0) begin
+            $display("ERROR: cannot open testbench/testcase/ppu_cases.txt");
+            $display("Run: python testbench/generate_ppu_cases.py");
+            $finish;
+        end
+
+        while (!$feof(fd)) begin
+            scan_count = $fscanf(fd, "%d %d %d %f %f\n",
+                                 row_idx, tile_idx, lane_idx,
+                                 score_value, golden_value);
+            if (scan_count == 5) begin
+                if ((row_idx < 0) || (row_idx >= ROWS) ||
+                    (tile_idx < 0) || (tile_idx >= TILES) ||
+                    (lane_idx < 0) || (lane_idx >= LANES)) begin
+                    $display("ERROR: testcase index out of range row=%0d tile=%0d lane=%0d",
+                             row_idx, tile_idx, lane_idx);
+                    $finish;
+                end
+
+                idx = value_idx(row_idx, tile_idx, lane_idx);
+                score_real[idx] = score_value;
+                golden_softmax[idx] = golden_value;
+                testcase_count = testcase_count + 1;
+
+                if (score_value > row_max_real[row_idx])
+                    row_max_real[row_idx] = score_value;
+            end
+        end
+
+        $fclose(fd);
+
+        if (testcase_count != TOTAL_VALUES) begin
+            $display("ERROR: testcase count mismatch, got=%0d expected=%0d", testcase_count, TOTAL_VALUES);
+            $finish;
+        end
+    end
+endtask
+
+task drive_score_input;
     input integer tile_idx;
     input integer row_idx;
     integer lane_idx;
     integer idx;
-    integer bidx;
-    reg signed [23:0] mac_lane;
-    reg signed [7:0] bias_lane;
     begin
+        score_input_vec = {16*40{1'b0}};
         mac_result_vec = {16*24{1'b0}};
         bias = {16*8{1'b0}};
 
         for (lane_idx = 0; lane_idx < LANES; lane_idx = lane_idx + 1) begin
             idx = value_idx(row_idx, tile_idx, lane_idx);
-            bidx = bias_idx(tile_idx, lane_idx);
-            mac_lane = mac_mem[idx];
-            bias_lane = bias_mem[bidx];
-            mac_result_vec[lane_idx*24 +: 24] = mac_lane;
-            bias[lane_idx*8 +: 8] = bias_lane;
+            score_input_vec[lane_idx*40 +: 40] = real_to_q24(score_real[idx]);
         end
+
+        // This testbench is softmax-only. PMS/BA/ReLU are bypassed here.
+        force dut.softmax_input = score_input_vec;
     end
 endtask
 
@@ -217,11 +203,11 @@ task run_path1;
     integer row_idx;
     integer tile_idx;
     begin
-        $display("=== PPU PATH1 START: 64 tiles x 16 rows ===");
+        $display("=== SOFTMAX PATH1 START: 64 tiles x 16 rows ===");
         for (tile_idx = 0; tile_idx < TILES; tile_idx = tile_idx + 1) begin
             for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
                 @(negedge clk);
-                drive_input(tile_idx, row_idx);
+                drive_score_input(tile_idx, row_idx);
                 valid = 1'b1;
                 path2_valid = 1'b0;
 
@@ -237,40 +223,27 @@ task run_path1;
         @(negedge clk);
         valid = 1'b0;
         path2_valid = 1'b0;
-        mac_result_vec = {16*24{1'b0}};
-        bias = {16*8{1'b0}};
-        $display("=== PPU PATH1 DONE ===");
+        $display("=== SOFTMAX PATH1 DONE ===");
     end
 endtask
 
-task check_path1_buffers;
+task check_path1_max_buffer;
     integer row_idx;
     real got_max;
-    real got_sum;
     real max_loss;
-    real sum_loss;
-    real sum_rel_loss_pct;
     begin
-        $display("=== PATH1 BUFFER CHECK ===");
-        $display("row  max_buf       golden_max    max_loss     sum_buf       golden_sum    sum_loss     sum_rel_loss_pct");
+        $display("=== PATH1 MAX BUFFER CHECK AGAINST TESTCASE SCORE ===");
+        $display("row  max_buf       score_max     max_loss");
 
         for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
             got_max = q24_to_real(dut.max_buffer[row_idx]);
-            got_sum = uq16_to_real(dut.sum_buffer[row_idx]);
             max_loss = got_max - row_max_real[row_idx];
-            sum_loss = got_sum - row_sum_real[row_idx];
-            if (row_sum_real[row_idx] != 0.0)
-                sum_rel_loss_pct = abs_real(sum_loss) / row_sum_real[row_idx] * 100.0;
-            else
-                sum_rel_loss_pct = 0.0;
-
-            $display("%2d   %0.8f   %0.8f   %0.8f   %0.8f   %0.8f   %0.8f   %0.4f",
-                     row_idx, got_max, row_max_real[row_idx], max_loss,
-                     got_sum, row_sum_real[row_idx], sum_loss, sum_rel_loss_pct);
+            $display("%2d   %0.8f   %0.8f   %0.8f",
+                     row_idx, got_max, row_max_real[row_idx], max_loss);
 
             if (abs_real(max_loss) > 0.000001) begin
                 error_count = error_count + 1;
-                $display("ERROR: max_buffer mismatch at row=%0d", row_idx);
+                $display("ERROR: max_buffer does not match testcase score max at row=%0d", row_idx);
             end
         end
     end
@@ -306,7 +279,6 @@ task check_path2_output;
             else
                 rel_loss_pct = 0.0;
 
-            observed_softmax[idx] = got_real;
             row_output_sum[row_idx] = row_output_sum[row_idx] + got_real;
             row_abs_loss_sum[row_idx] = row_abs_loss_sum[row_idx] + abs_loss;
             row_sq_loss_sum[row_idx] = row_sq_loss_sum[row_idx] + loss * loss;
@@ -331,9 +303,9 @@ task check_path2_output;
                 max_rel_loss_pct = rel_loss_pct;
 
             if (PRINT_EVERY_RESULT) begin
-                $display("PPU_RESULT tile=%0d row=%0d lane=%0d q16=%05h got=%0.8f golden=%0.8f loss=%0.8f abs_loss=%0.8f rel_loss_pct=%0.4f",
-                         tile_idx, row_idx, lane_idx, got_q16, got_real,
-                         golden_real, loss, abs_loss, rel_loss_pct);
+                $display("SOFTMAX_RESULT tile=%0d row=%0d lane=%0d score=%0.8f q16=%05h got=%0.8f golden=%0.8f loss=%0.8f abs_loss=%0.8f rel_loss_pct=%0.4f",
+                         tile_idx, row_idx, lane_idx, score_real[idx], got_q16,
+                         got_real, golden_real, loss, abs_loss, rel_loss_pct);
             end
         end
     end
@@ -343,11 +315,11 @@ task run_path2;
     integer row_idx;
     integer tile_idx;
     begin
-        $display("=== PPU PATH2 START: replay same 64 tiles x 16 rows ===");
+        $display("=== SOFTMAX PATH2 START: replay same 64 tiles x 16 rows ===");
         for (tile_idx = 0; tile_idx < TILES; tile_idx = tile_idx + 1) begin
             for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
                 @(negedge clk);
-                drive_input(tile_idx, row_idx);
+                drive_score_input(tile_idx, row_idx);
                 valid = 1'b0;
                 path2_valid = 1'b1;
 
@@ -364,9 +336,8 @@ task run_path2;
         @(negedge clk);
         valid = 1'b0;
         path2_valid = 1'b0;
-        mac_result_vec = {16*24{1'b0}};
-        bias = {16*8{1'b0}};
-        $display("=== PPU PATH2 DONE ===");
+        release dut.softmax_input;
+        $display("=== SOFTMAX PATH2 DONE ===");
     end
 endtask
 
@@ -399,7 +370,7 @@ task print_loss_summary;
     real rmse;
     real mean_rel_pct;
     begin
-        $display("=== PPU ROW LOSS SUMMARY ===");
+        $display("=== SOFTMAX ROW LOSS SUMMARY AGAINST TESTCASE GOLDEN ===");
         $display("row  out_sum      sum_loss     mean_abs_loss  max_abs_loss   rmse");
         for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
             row_mean_abs = row_abs_loss_sum[row_idx] / (TILES * LANES);
@@ -410,7 +381,7 @@ task print_loss_summary;
                      row_idx, row_output_sum[row_idx], row_sum_loss,
                      row_mean_abs, row_max_abs_loss[row_idx], row_rmse);
 
-            if (CHECK_NUMERIC_LIMITS && abs_real(row_sum_loss) > ROW_SUM_LOSS_LIMIT) begin
+            if (CHECK_LOSS_LIMITS && abs_real(row_sum_loss) > ROW_SUM_LOSS_LIMIT) begin
                 error_count = error_count + 1;
                 $display("ERROR: row %0d output sum loss %0.8f exceeds limit %0.8f",
                          row_idx, abs_real(row_sum_loss), ROW_SUM_LOSS_LIMIT);
@@ -421,7 +392,7 @@ task print_loss_summary;
         rmse = (total_sq_loss / output_count) ** 0.5;
         mean_rel_pct = total_rel_loss_pct / output_count;
 
-        $display("=== PPU GLOBAL LOSS SUMMARY ===");
+        $display("=== SOFTMAX GLOBAL LOSS SUMMARY AGAINST TESTCASE GOLDEN ===");
         $display("outputs              : %0d", output_count);
         $display("mean_abs_loss        : %0.8f", mean_abs);
         $display("max_abs_loss         : %0.8f", max_abs_loss);
@@ -431,7 +402,7 @@ task print_loss_summary;
         $display("worst_location       : row=%0d tile=%0d lane=%0d", worst_row, worst_tile, worst_lane);
         $display("worst_observed/golden: %0.8f / %0.8f", worst_observed, worst_golden);
 
-        if (CHECK_NUMERIC_LIMITS && max_abs_loss > MAX_ABS_LOSS_LIMIT) begin
+        if (CHECK_LOSS_LIMITS && max_abs_loss > MAX_ABS_LOSS_LIMIT) begin
             error_count = error_count + 1;
             $display("ERROR: max_abs_loss %0.8f exceeds limit %0.8f", max_abs_loss, MAX_ABS_LOSS_LIMIT);
         end
@@ -457,20 +428,25 @@ initial begin
     path2_valid = 1'b0;
     mac_result_vec = {16*24{1'b0}};
     bias = {16*8{1'b0}};
+    score_input_vec = {16*40{1'b0}};
 
-    build_vectors;
+    load_testcase;
 
-    $display("=== PPU TEST START ===");
-    $display("Generated deterministic vectors: rows=%0d tiles=%0d lanes=%0d outputs=%0d",
-             ROWS, TILES, LANES, TOTAL_VALUES);
-    $display("PRINT_EVERY_RESULT=%0d CHECK_NUMERIC_LIMITS=%0d", PRINT_EVERY_RESULT, CHECK_NUMERIC_LIMITS);
+    $display("=== SOFTMAX-ONLY PPU TEST START ===");
+    $display("Testcase file : testbench/testcase/ppu_cases.txt");
+    $display("Columns       : row tile lane score_real golden_softmax");
+    $display("Golden output : precomputed outside this testbench");
+    $display("PMS/BA/ReLU   : bypassed in this softmax-loss test");
+    $display("Loaded deterministic vectors: rows=%0d tiles=%0d lanes=%0d outputs=%0d",
+             ROWS, TILES, LANES, testcase_count);
+    $display("PRINT_EVERY_RESULT=%0d CHECK_LOSS_LIMITS=%0d", PRINT_EVERY_RESULT, CHECK_LOSS_LIMITS);
 
     repeat (4) @(posedge clk);
     @(negedge clk);
     rst_n = 1'b1;
 
     run_path1;
-    check_path1_buffers;
+    check_path1_max_buffer;
     run_path2;
     check_final_reset;
     print_loss_summary;
