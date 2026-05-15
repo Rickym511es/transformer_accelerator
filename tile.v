@@ -1,12 +1,14 @@
 `timescale 1ns/10ps
-module tile(clk, rst_n, vecA, vecB, int4_gate, int8_gate, VSQ_gate, tile_done, latch_array, start);        
+// int8-only mode: old mode-gated header kept here for reference.
+// module tile(clk, rst_n, vecA, vecB, int4_gate, int8_gate, VSQ_gate, tile_done, latch_array, start);
+module tile(clk, rst_n, vecA, vecB, tile_done, latch_array, start);
     input clk;
     input rst_n;
     input [255:0] vecA [0:15];  
     input [255:0] vecB;     
-    input int4_gate;
-    input int8_gate;
-    input VSQ_gate;
+    // input int4_gate;
+    // input int8_gate;
+    // input VSQ_gate;
     input start;
 
     input tile_done;
@@ -18,9 +20,9 @@ module tile(clk, rst_n, vecA, vecB, int4_gate, int8_gate, VSQ_gate, tile_done, l
     MAC16 MAC_unit (
                 .vecA(vecA), 
                 .vecB(vecB), 
-                .int4_gate(int4_gate), 
-                .int8_gate(int8_gate), 
-                .VSQ_gate(VSQ_gate), 
+                // .int4_gate(int4_gate),
+                // .int8_gate(int8_gate),
+                // .VSQ_gate(VSQ_gate),
                 .partial_sum_in(partial_sum_in), 
                 .result(MAC_result)
                 );

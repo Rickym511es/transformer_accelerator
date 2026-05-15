@@ -1,7 +1,16 @@
 `timescale 1ns/10ps
 `define CYCLE       10.0
-`define PAT_NUM     10
+`define PAT_NUM     1
 `define End_CYCLE   1000000
+`define MAT_M       1024
+`define MAT_K       64
+`define MAT_N       1024
+`define VL          16
+`define VS          32
+`define AD          16
+`define M_TILE_NUM  (`MAT_M/`VL)
+`define K_TILE_NUM  (`MAT_K/`VS)
+`define N_TILE_NUM  (`MAT_N/`AD)
 
 module testbench;
 reg clk;
@@ -10,9 +19,9 @@ reg rst_n;
 reg [255:0] Amem [0:15];
 reg [255:0] Bmem [0:15];
 reg [255:0] vecB;
-reg int4_gate;
-reg int8_gate;
-reg VSQ_gate;
+// reg int4_gate;
+// reg int8_gate;
+// reg VSQ_gate;
 reg tile_done;
 reg [23:0] latch_array [0:15][0:15];
 reg start;
@@ -22,9 +31,9 @@ tile uut (
     .rst_n(rst_n),
     .vecA(Amem),
     .vecB(vecB),
-    .int4_gate(int4_gate),
-    .int8_gate(int8_gate),
-    .VSQ_gate(VSQ_gate),
+    // .int4_gate(int4_gate),
+    // .int8_gate(int8_gate),
+    // .VSQ_gate(VSQ_gate),
     .tile_done(tile_done),
     .latch_array(latch_array),
     .start(start)
@@ -50,6 +59,14 @@ integer p;
 integer err;
 integer pass;
 integer ERR;
+integer first_fail_seen;
+integer first_fail_pat;
+integer first_fail_m_tile;
+integer first_fail_n_tile;
+integer first_fail_lane;
+integer first_fail_col;
+reg signed [23:0] first_fail_got;
+reg signed [23:0] first_fail_golden;
 reg [256*8-1:0] pathA; //ASCII = 8bits
 reg [256*8-1:0] pathB;
 reg [256*8-1:0] pathG;
@@ -60,17 +77,18 @@ initial begin
     $fsdbDumpMDA;
 end
 ////////////////
-integer step2; // K/VS
-integer step3; // N/AD
-integer step4; // M/VL
+integer step2; // K/VS = 64/32 = 2
+integer step3; // N/AD = 1024/16 = 64
+integer step4; // M/VL = 1024/16 = 64
 ////////////////
 initial begin
     err = 0;
     pass = 0;
+    first_fail_seen = 0;
     
-    int4_gate = 0;
-    int8_gate = 1;
-    VSQ_gate  = 0;
+    // int4_gate = 0;
+    // int8_gate = 1;
+    // VSQ_gate  = 0;
     vecB      = 0;
     tile_done = 0;
     rst_n     = 0;
@@ -86,21 +104,36 @@ initial begin
         @(posedge clk);
         start = 1;
         
-        for (step4 = 1 ; step4 < 17; step4 = step4 + 1) begin
-            for (step3 = 1; step3 < 17; step3 = step3 + 1) begin
+        for (step4 = 1 ; step4 <= `M_TILE_NUM; step4 = step4 + 1) begin
+            for (step3 = 1; step3 <= `N_TILE_NUM; step3 = step3 + 1) begin
                 
                 rst_n = 0;
                 @(posedge clk);
                 rst_n = 1;
                 start = 1;
 
-                $sformat(pathG, "MMpattern(stage4+)/pat%0d/C_golden_tile%0d-%0d.txt", p, step4, step3); 
-                for (step2 = 1; step2 < 17; step2 = step2 + 1) begin
-                    $sformat(pathA, "MMpattern(stage4+)/pat%0d/vecA_tile%0d-%0d.txt", p, step4, step2);
-                    $sformat(pathB, "MMpattern(stage4+)/pat%0d/vecB_stream%0d-%0d.txt", p, step3, step2);
+                $sformat(pathG, "testbench/testcase/mac/pat%0d/C_golden_tile%0d-%0d.txt", p, step4, step3);
+                fd = $fopen(pathG, "r");
+                if (fd == 0)
+                    $sformat(pathG, "testcase/mac/pat%0d/C_golden_tile%0d-%0d.txt", p, step4, step3);
+                else
+                    $fclose(fd);
+                $readmemb(pathG, golden);
+                for (step2 = 1; step2 <= `K_TILE_NUM; step2 = step2 + 1) begin
+                    $sformat(pathA, "testbench/testcase/mac/pat%0d/vecA_tile%0d-%0d.txt", p, step4, step2);
+                    $sformat(pathB, "testbench/testcase/mac/pat%0d/vecB_stream%0d-%0d.txt", p, step3, step2);
+                    fd = $fopen(pathA, "r");
+                    if (fd == 0)
+                        $sformat(pathA, "testcase/mac/pat%0d/vecA_tile%0d-%0d.txt", p, step4, step2);
+                    else
+                        $fclose(fd);
+                    fd = $fopen(pathB, "r");
+                    if (fd == 0)
+                        $sformat(pathB, "testcase/mac/pat%0d/vecB_stream%0d-%0d.txt", p, step3, step2);
+                    else
+                        $fclose(fd);
                     $readmemb(pathA, Amem);
                     $readmemb(pathB, Bmem);
-                    $readmemb(pathG, golden);
 
                     for (i = 0; i < 16; i = i + 1) begin
                         vecB <= Bmem[i];
@@ -118,17 +151,26 @@ initial begin
                 ERR = 0;
                 for (i = 0; i < 16; i = i + 1) begin
                     for (j = 0; j < 16; j = j + 1) begin
-                        if ($signed(latch_array[i][j]) !== golden[i][j]) 
+                        if ($signed(latch_array[i][j]) !== golden[i][j]) begin
                             ERR = 1;
+                            if (!first_fail_seen) begin
+                                first_fail_seen = 1;
+                                first_fail_pat = p;
+                                first_fail_m_tile = step4;
+                                first_fail_n_tile = step3;
+                                first_fail_lane = i;
+                                first_fail_col = j;
+                                first_fail_got = latch_array[i][j];
+                                first_fail_golden = golden[i][j];
+                            end
+                        end
                     end
                 end
                 if (ERR == 0) begin
                     pass = pass + 1;
-                    $display("Pattern %0d - tile%0d-%0d: PASS", p, step4, step3);
                 end
                 else begin
                     err = err + 1;
-                    $display("Pattern %0d- tile%0d-%0d: FAIL", p, step4, step3);
                 end
             end
         end
@@ -137,14 +179,22 @@ initial begin
 
     if (err == 0) begin
         $display("Congratulations! All data have been generated successfully!\n");
+        $display("Pass:   %0d \n", pass);
+        $display("Error:  %0d \n", err);
         $display("Total cost time: %10.2f ns", cycle_count*(`CYCLE));
         $display("-------------------------PASS------------------------\n");
     end
     else begin
         $display("Final Simulation Result as below: \n");         
         $display("-----------------------------------------------------\n");
-        $display("Pass:   %3d \n", pass);
-        $display("Error:  %3d \n", err);
+        $display("Pass:   %0d \n", pass);
+        $display("Error:  %0d \n", err);
+        if (first_fail_seen) begin
+            $display("First mismatch: pat=%0d tile=%0d-%0d lane=%0d col=%0d got=%0d golden=%0d",
+                     first_fail_pat, first_fail_m_tile, first_fail_n_tile,
+                     first_fail_lane, first_fail_col,
+                     first_fail_got, first_fail_golden);
+        end
         $display("-----------------------------------------------------\n");
     end
 

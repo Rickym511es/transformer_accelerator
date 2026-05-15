@@ -27,7 +27,7 @@ reg signed [16*8-1:0] bias;
 reg signed [16*40-1:0] score_input_vec;
 
 wire softmax_valid;
-wire [16*17-1:0] softmax_result_vec;
+wire [16*20-1:0] softmax_result_vec;
 
 real score_real [0:TOTAL_VALUES-1];
 real golden_e_softmax [0:TOTAL_VALUES-1];
@@ -114,10 +114,10 @@ function real abs_real;
     end
 endfunction
 
-function real q16_to_real;
-    input [16:0] value;
+function real q19_to_real;
+    input [19:0] value;
     begin
-        q16_to_real = value / 65536.0;
+        q19_to_real = value / 524288.0;
     end
 endfunction
 
@@ -299,7 +299,7 @@ task check_path2_output;
     input integer row_idx;
     integer lane_idx;
     integer idx;
-    reg [16:0] got_q16;
+    reg [19:0] got_q19;
     real got_real;
     real golden_e_real;
     real golden_2_real;
@@ -320,8 +320,8 @@ task check_path2_output;
 
         for (lane_idx = 0; lane_idx < LANES; lane_idx = lane_idx + 1) begin
             idx = value_idx(row_idx, tile_idx, lane_idx);
-            got_q16 = softmax_result_vec[lane_idx*17 +: 17];
-            got_real = q16_to_real(got_q16);
+            got_q19 = softmax_result_vec[lane_idx*20 +: 20];
+            got_real = q19_to_real(got_q19);
             golden_e_real = golden_e_softmax[idx];
             golden_2_real = golden_2_softmax[idx];
             hw_softmax[idx] = got_real;

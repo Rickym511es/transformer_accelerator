@@ -17,12 +17,13 @@ input signed [16*24-1:0] mac_result_vec;
 input signed [16*8-1:0] bias;
 input path2_valid;
 output reg softmax_valid;
-output reg [16*17-1:0] softmax_result_vec;
+output reg [16*20-1:0] softmax_result_vec;
 
 localparam signed [39:0] MAX_Q16_24 = 40'sh7fffffffff;
 localparam signed [47:0] MAX_Q16_24_EXT = 48'sh007fffffffff;
 localparam [27:0] SUM_SAT = 28'hfffffff;
-localparam [16:0] ONE_Q16 = 17'd65536;
+localparam [19:0] ONE_Q19 = 20'd524288;
+localparam [33:0] ROUND_Q19 = 34'd4096;
 localparam [3:0] LAST_ROW = 4'd15;
 localparam [5:0] LAST_TILE = 6'd63;
 
@@ -45,8 +46,8 @@ wire [27:0] path2_sum_value;
 wire [16*17-1:0] path2_exp_result_vec;
 wire [16:0] path2_reciprocal;
 wire [16*34-1:0] path2_mult_full_vec;
-wire [16*18-1:0] path2_mult_q16_vec;
-wire [16*17-1:0] path2_softmax_comb;
+wire [16*21-1:0] path2_mult_q19_vec;
+wire [16*20-1:0] path2_softmax_comb;
 wire path1_fire;
 wire path2_fire;
 wire path1_row_last;
@@ -159,8 +160,8 @@ generate
         );
 
         assign path2_mult_full_vec[path2_i*34 +: 34] = path2_exp_result_vec[path2_i*17 +: 17] * path2_reciprocal;
-        assign path2_mult_q16_vec[path2_i*18 +: 18] = path2_mult_full_vec[path2_i*34 +: 34] >> 16;
-        assign path2_softmax_comb[path2_i*17 +: 17] = path2_mult_q16_vec[path2_i*18+17] ? ONE_Q16 : path2_mult_q16_vec[path2_i*18 +: 17];
+        assign path2_mult_q19_vec[path2_i*21 +: 21] = (path2_mult_full_vec[path2_i*34 +: 34] + ROUND_Q19) >> 13;
+        assign path2_softmax_comb[path2_i*20 +: 20] = path2_mult_q19_vec[path2_i*21+20] ? ONE_Q19 : path2_mult_q19_vec[path2_i*21 +: 20];
     end
 endgenerate
 
@@ -172,7 +173,7 @@ always @(posedge clk or negedge rst_n) begin
         tile_counter <= 6'd0;
         path2_tile_counter <= 6'd0;
         softmax_valid <= 1'b0;
-        softmax_result_vec <= {16*17{1'b0}};
+        softmax_result_vec <= {16*20{1'b0}};
         for (rst_i = 0; rst_i < 16; rst_i = rst_i + 1) begin
             max_buffer[rst_i] <= 40'sd0;
             sum_buffer[rst_i] <= 28'd0;
