@@ -17,13 +17,14 @@ input signed [16*24-1:0] mac_result_vec;
 input signed [16*8-1:0] bias;
 input path2_valid;
 output reg softmax_valid;
-output reg [16*20-1:0] softmax_result_vec;
+// Final int8 quantized softmax output, 16 packed lanes.
+output reg [16*8-1:0] softmax_result_vec;
 
 localparam signed [39:0] MAX_Q16_24 = 40'sh7fffffffff;
 localparam signed [47:0] MAX_Q16_24_EXT = 48'sh007fffffffff;
 localparam [27:0] SUM_SAT = 28'hfffffff;
-localparam [19:0] ONE_Q19 = 20'd524288;
-localparam [33:0] ROUND_Q19 = 34'd4096;
+localparam [7:0] QUANT_MAX = 8'd127;
+localparam [23:0] ROUND_Q16 = 24'd32768;
 localparam [3:0] LAST_ROW = 4'd15;
 localparam [5:0] LAST_TILE = 6'd63;
 
@@ -35,6 +36,7 @@ reg signed [16*40-1:0] softmax_input;
 wire signed [39:0] block_max;
 wire signed [39:0] previous_max;
 wire signed [39:0] max_value;
+wire signed [39:0] exp_max_value;
 wire [16:0] max_delta_exp;
 wire [16*17-1:0] exp_result_vec;
 reg [27:0] exp_sum;
@@ -43,11 +45,9 @@ wire [27:0] previous_sum_adjusted;
 wire [27:0] sum_value;
 wire signed [39:0] path2_max_value;
 wire [27:0] path2_sum_value;
-wire [16*17-1:0] path2_exp_result_vec;
 wire [16:0] path2_reciprocal;
-wire [16*34-1:0] path2_mult_full_vec;
-wire [16*21-1:0] path2_mult_q19_vec;
-wire [16*20-1:0] path2_softmax_comb;
+wire [16*8-1:0] path2_quant_normal_comb;
+wire [16*8-1:0] path2_quant_shift_comb;
 wire path1_fire;
 wire path2_fire;
 wire path1_row_last;
@@ -62,6 +62,9 @@ reg [5:0] tile_counter;
 reg [5:0] path2_tile_counter;
 reg signed [39:0] max_buffer [0:15];
 reg [27:0] sum_buffer [0:15];
+reg [16*17-1:0] softmax_exp_debug_vec;
+reg [16:0] softmax_reciprocal_debug;
+reg [16*8-1:0] softmax_shift_debug_vec;
 
 PMS pms_inst (mac_result_vec, 256'd0, pms_result);
 
@@ -97,13 +100,14 @@ vec_max row_max_inst (
 assign previous_max = max_buffer[row_counter];
 assign previous_sum = sum_buffer[row_counter];
 assign max_value = (block_max > previous_max) ? block_max : previous_max;
+assign exp_max_value = path2_fire ? path2_max_value : max_value;
 
 genvar exp_i;
 generate
     for (exp_i = 0; exp_i < 16; exp_i = exp_i + 1) begin : EXP_LANE
         LPW_expo exp_inst (
             .data_in(softmax_input[exp_i*40 +: 40]),
-            .max    (max_value),
+            .max    (exp_max_value),
             .result (exp_result_vec[exp_i*17 +: 17])
         );
     end
@@ -153,15 +157,21 @@ LPW_reciprocal path2_reciprocal_inst (
 genvar path2_i;
 generate
     for (path2_i = 0; path2_i < 16; path2_i = path2_i + 1) begin : PATH2_LANE
-        LPW_expo path2_exp_inst (
-            .data_in(softmax_input[path2_i*40 +: 40]),
-            .max    (path2_max_value),
-            .result (path2_exp_result_vec[path2_i*17 +: 17])
-        );
+        wire [16:0] exp_q16;
+        wire [23:0] quant127_full;
+        wire [8:0] quant127_wide;
+        wire [8:0] quant128_shift_wide;
+        wire [7:0] quant127_sat;
+        wire [7:0] quant128_shift_sat;
 
-        assign path2_mult_full_vec[path2_i*34 +: 34] = path2_exp_result_vec[path2_i*17 +: 17] * path2_reciprocal;
-        assign path2_mult_q19_vec[path2_i*21 +: 21] = (path2_mult_full_vec[path2_i*34 +: 34] + ROUND_Q19) >> 13;
-        assign path2_softmax_comb[path2_i*20 +: 20] = path2_mult_q19_vec[path2_i*21+20] ? ONE_Q19 : path2_mult_q19_vec[path2_i*21 +: 20];
+        assign exp_q16 = exp_result_vec[path2_i*17 +: 17];
+        assign quant127_full = ({7'd0, exp_q16} << 7) - {7'd0, exp_q16} + ROUND_Q16;
+        assign quant127_wide = quant127_full >> 16;
+        assign quant128_shift_wide = exp_q16 >> 9;
+        assign quant127_sat = (quant127_wide > {1'b0, QUANT_MAX}) ? QUANT_MAX : quant127_wide[7:0];
+        assign quant128_shift_sat = (quant128_shift_wide > {1'b0, QUANT_MAX}) ? QUANT_MAX : quant128_shift_wide[7:0];
+        assign path2_quant_normal_comb[path2_i*8 +: 8] = quant127_sat;
+        assign path2_quant_shift_comb[path2_i*8 +: 8] = quant128_shift_sat;
     end
 endgenerate
 
@@ -173,7 +183,10 @@ always @(posedge clk or negedge rst_n) begin
         tile_counter <= 6'd0;
         path2_tile_counter <= 6'd0;
         softmax_valid <= 1'b0;
-        softmax_result_vec <= {16*20{1'b0}};
+        softmax_result_vec <= {16*8{1'b0}};
+        softmax_exp_debug_vec <= {16*17{1'b0}};
+        softmax_reciprocal_debug <= 17'd0;
+        softmax_shift_debug_vec <= {16*8{1'b0}};
         for (rst_i = 0; rst_i < 16; rst_i = rst_i + 1) begin
             max_buffer[rst_i] <= 40'sd0;
             sum_buffer[rst_i] <= 28'd0;
@@ -198,7 +211,10 @@ always @(posedge clk or negedge rst_n) begin
         end
 
         if (path2_fire) begin
-            softmax_result_vec <= path2_softmax_comb;
+            softmax_result_vec <= path2_quant_normal_comb;
+            softmax_exp_debug_vec <= exp_result_vec;
+            softmax_reciprocal_debug <= path2_reciprocal;
+            softmax_shift_debug_vec <= path2_quant_shift_comb;
             softmax_valid <= 1'b1;
             if (path2_row_last) begin
                 path2_row_counter <= 4'd0;

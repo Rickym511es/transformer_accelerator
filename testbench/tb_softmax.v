@@ -3,10 +3,10 @@
 // python testbench/generate_ppu_cases.py
 //
 // Run example:
-// iverilog -g2012 -o tb_PPU.vvp PPU_modules.v softmax_modules.v PPU.v testbench/tb_PPU.v
-// vvp tb_PPU.vvp
+// iverilog -g2012 -o tb_softmax.vvp PPU_modules.v softmax_modules.v PPU.v testbench/tb_softmax.v
+// vvp tb_softmax.vvp
 
-module tb_PPU;
+module tb_softmax;
 
 parameter ROWS = 16;
 parameter TILES = 64;
@@ -27,7 +27,7 @@ reg signed [16*8-1:0] bias;
 reg signed [16*40-1:0] score_input_vec;
 
 wire softmax_valid;
-wire [16*20-1:0] softmax_result_vec;
+wire [16*8-1:0] softmax_result_vec;
 
 real score_real [0:TOTAL_VALUES-1];
 real golden_e_softmax [0:TOTAL_VALUES-1];
@@ -114,10 +114,11 @@ function real abs_real;
     end
 endfunction
 
-function real q19_to_real;
-    input [19:0] value;
+function real q16_product_to_real;
+    input [16:0] exp_value;
+    input [16:0] recip_value;
     begin
-        q19_to_real = value / 524288.0;
+        q16_product_to_real = (exp_value / 65536.0) * (recip_value / 65536.0);
     end
 endfunction
 
@@ -176,11 +177,11 @@ task load_testcase;
         testcase_count = 0;
         init_arrays;
 
-        fd = $fopen("testbench/testcase/ppu_cases.txt", "r");
+        fd = $fopen("testbench/testcase/softmax_cases.txt", "r");
         if (fd == 0)
-            fd = $fopen("testcase/ppu_cases.txt", "r");
+            fd = $fopen("testcase/softmax_cases.txt", "r");
         if (fd == 0) begin
-            $display("ERROR: cannot open testbench/testcase/ppu_cases.txt");
+            $display("ERROR: cannot open testbench/testcase/softmax_cases.txt");
             $display("Run: python testbench/generate_ppu_cases.py");
             $finish;
         end
@@ -299,7 +300,8 @@ task check_path2_output;
     input integer row_idx;
     integer lane_idx;
     integer idx;
-    reg [19:0] got_q19;
+    reg [16:0] got_exp_q16;
+    reg [16:0] got_recip_q16;
     real got_real;
     real golden_e_real;
     real golden_2_real;
@@ -313,15 +315,20 @@ task check_path2_output;
     real abs_loss_base;
     real rel_loss_base_pct;
     begin
-        if ((^softmax_result_vec) === 1'bx) begin
+        if ((^dut.softmax_exp_debug_vec) === 1'bx) begin
             error_count = error_count + 1;
-            $display("ERROR: X detected in softmax_result_vec at tile=%0d row=%0d", tile_idx, row_idx);
+            $display("ERROR: X detected in softmax_exp_debug_vec at tile=%0d row=%0d", tile_idx, row_idx);
+        end
+        if ((^dut.softmax_reciprocal_debug) === 1'bx) begin
+            error_count = error_count + 1;
+            $display("ERROR: X detected in softmax_reciprocal_debug at tile=%0d row=%0d", tile_idx, row_idx);
         end
 
         for (lane_idx = 0; lane_idx < LANES; lane_idx = lane_idx + 1) begin
             idx = value_idx(row_idx, tile_idx, lane_idx);
-            got_q19 = softmax_result_vec[lane_idx*20 +: 20];
-            got_real = q19_to_real(got_q19);
+            got_exp_q16 = dut.softmax_exp_debug_vec[lane_idx*17 +: 17];
+            got_recip_q16 = dut.softmax_reciprocal_debug;
+            got_real = q16_product_to_real(got_exp_q16, got_recip_q16);
             golden_e_real = golden_e_softmax[idx];
             golden_2_real = golden_2_softmax[idx];
             hw_softmax[idx] = got_real;
@@ -1199,7 +1206,7 @@ initial begin
     load_testcase;
 
     $display("=== SOFTMAX-ONLY PPU TEST START ===");
-    $display("Testcase file : testbench/testcase/ppu_cases.txt");
+    $display("Testcase file : testbench/testcase/softmax_cases.txt");
     $display("Columns       : row tile lane score_real golden_e_softmax golden_2_softmax");
     $display("Golden output : precomputed outside this testbench");
     $display("PMS/BA/ReLU   : ignored by forcing softmax_input directly");
