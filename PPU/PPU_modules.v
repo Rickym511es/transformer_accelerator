@@ -51,3 +51,28 @@ always @(*) begin
     end
 end
 endmodule
+
+// Combined PMS, bias addition, and ReLU stage for both PPU paths.
+// scale is kept in the port list for interface compatibility with the old PMS block.
+module PMS_BA_ReLU(MAC_result, scale, bias, ReLU_result);
+input signed [383:0] MAC_result;
+input [255:0] scale;
+input signed [127:0] bias;
+output reg signed [639:0] ReLU_result;
+
+integer i;
+reg signed [39:0] pms_value;
+reg signed [39:0] ba_value;
+
+always @(*) begin
+    ReLU_result = 640'sd0;
+    for (i = 0; i < 16; i = i + 1) begin
+        pms_value = $signed({{16{MAC_result[i*24+23]}}, MAC_result[i*24 +: 24]}) <<< 13;
+        ba_value = pms_value + ($signed({{32{bias[i*8+7]}}, bias[i*8 +: 8]}) <<< 12);
+        if (ba_value[39])
+            ReLU_result[i*40 +: 40] = 40'sd0;
+        else
+            ReLU_result[i*40 +: 40] = ba_value;
+    end
+end
+endmodule
