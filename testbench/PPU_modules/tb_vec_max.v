@@ -13,14 +13,14 @@ vec_max dut (
 function [39:0] q24;
     input real r;
     begin
-        q24 = $rtoi(r * 16777216.0);
+        q24 = $rtoi(r * 65536.0);
     end
 endfunction
 
 function real q24_to_real;
     input [39:0] v;
     begin
-        q24_to_real = $signed(v) / 16777216.0;
+        q24_to_real = $signed(v) / 65536.0;
     end
 endfunction
 

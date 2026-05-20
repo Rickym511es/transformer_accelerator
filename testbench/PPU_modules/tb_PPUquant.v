@@ -89,7 +89,7 @@ endfunction
 function signed [39:0] real_to_q24;
     input real value;
     begin
-        real_to_q24 = $rtoi(value * 16777216.0);
+        real_to_q24 = $rtoi(value * 65536.0);
     end
 endfunction
 

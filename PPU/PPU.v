@@ -22,8 +22,6 @@ output reg [16*8-1:0] softmax_result_vec;
 // softmax_scale = round(2^24 / ((128 - 1) times sum_buffer_real)).
 output reg [23:0] softmax_scale;
 
-localparam signed [39:0] MAX_Q16_24 = 40'sh7fffffffff;
-localparam signed [47:0] MAX_Q16_24_EXT = 48'sh007fffffffff;
 localparam [27:0] SUM_SAT = 28'hfffffff;
 localparam [23:0] ROUND_Q16 = 24'd32768;
 localparam [3:0] LAST_ROW = 4'd15;
@@ -51,7 +49,7 @@ reg path2_input_done;
 reg signed [39:0] max_buffer [0:15];
 reg [27:0] sum_buffer [0:15];
 
-// Path1 stage 1 registers: combined PMS, bias add, ReLU, then Q16.24 conversion.
+// Path1 stage 1 registers: combined PMS, bias add, ReLU, kept in Q24.16.
 reg path1_s1_valid;
 reg path1_s1_last;
 reg [3:0] path1_s1_row;
@@ -81,7 +79,7 @@ wire [27:0] path1_sum_current;
 wire [28:0] path1_sum_value_wide;
 wire [27:0] path1_sum_value;
 
-// Path2 stage 1 registers: combined PMS, bias add, ReLU, then Q16.24 conversion.
+// Path2 stage 1 registers: combined PMS, bias add, ReLU, kept in Q24.16.
 reg path2_s1_valid;
 reg path2_s1_last;
 reg [3:0] path2_s1_row;
@@ -105,15 +103,10 @@ PMS_BA_ReLU pms_ba_relu_inst (
 );
 
 integer lane_i;
-reg signed [47:0] relu_q16_24_ext;
 always @(*) begin
     softmax_input = {16*40{1'b0}};
     for (lane_i = 0; lane_i < 16; lane_i = lane_i + 1) begin
-        relu_q16_24_ext = $signed(pms_ba_relu_result[lane_i*40 +: 40]) <<< 8;
-        if (relu_q16_24_ext > MAX_Q16_24_EXT)
-            softmax_input[lane_i*40 +: 40] = MAX_Q16_24;
-        else
-            softmax_input[lane_i*40 +: 40] = relu_q16_24_ext[39:0];
+        softmax_input[lane_i*40 +: 40] = pms_ba_relu_result[lane_i*40 +: 40];
     end
 end
 

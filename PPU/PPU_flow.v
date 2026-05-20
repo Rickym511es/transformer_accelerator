@@ -20,8 +20,6 @@ output reg softmax_valid;
 // Final int8 quantized softmax output, 16 packed lanes.
 output reg [16*8-1:0] softmax_result_vec;
 
-localparam signed [31:0] MAX_Q8_24 = 32'sh7fffffff;
-localparam signed [47:0] MAX_Q8_24_EXT = 48'sh00007fffffff;
 localparam [27:0] SUM_SAT = 28'hfffffff;
 localparam [7:0] QUANT_MAX = 8'd127;
 localparam [23:0] ROUND_Q16 = 24'd32768;
@@ -34,20 +32,16 @@ wire signed [16*40-1:0] relu_result;
 reg signed [16*40-1:0] softmax_input;
 
 wire signed [39:0] block_max;
-wire signed [31:0] block_max_q8_24;
-wire signed [31:0] previous_max;
-wire signed [31:0] max_value;
-wire signed [39:0] previous_max_ext;
-wire signed [39:0] max_value_ext;
-wire signed [39:0] exp_max_value;
+wire signed [39:0] previous_max;
+wire signed [39:0] max_value;
+wire signed [39:0] exp_reference_max;
 wire [16:0] max_delta_exp;
 wire [16*17-1:0] exp_result_vec;
 reg [27:0] exp_sum;
 wire [27:0] previous_sum;
 wire [27:0] previous_sum_adjusted;
 wire [27:0] sum_value;
-wire signed [31:0] path2_max_value;
-wire signed [39:0] path2_max_value_ext;
+wire signed [39:0] path2_max_value;
 wire [27:0] path2_sum_value;
 wire [16:0] path2_reciprocal;
 wire [16*8-1:0] path2_quant_normal_comb;
@@ -64,7 +58,7 @@ reg [3:0] row_counter;
 reg [3:0] path2_row_counter;
 reg [5:0] tile_counter;
 reg [5:0] path2_tile_counter;
-reg signed [31:0] max_buffer [0:15];
+reg signed [39:0] max_buffer [0:15];
 reg [27:0] sum_buffer [0:15];
 reg [16*17-1:0] softmax_exp_debug_vec;
 reg [16:0] softmax_reciprocal_debug;
@@ -84,20 +78,12 @@ ReLU relu_inst (
 );
 
 integer qconv_i;
-reg signed [47:0] qconv_tmp;
-reg signed [31:0] qconv_q8_24;
 always @(*) begin
     softmax_input = {16*40{1'b0}};
     for (qconv_i = 0; qconv_i < 16; qconv_i = qconv_i + 1) begin
-        // PMS/BA/ReLU produces Q24.16. Use Q8.24 for softmax loss tests,
-        // then sign-extend back to the LPW module's Q16.24 port width.
-        qconv_tmp = $signed(relu_result[qconv_i*40 +: 40]) <<< 8;
-        if (qconv_tmp > MAX_Q8_24_EXT)
-            qconv_q8_24 = MAX_Q8_24;
-        else
-            qconv_q8_24 = qconv_tmp[31:0];
-
-        softmax_input[qconv_i*40 +: 40] = {{8{qconv_q8_24[31]}}, qconv_q8_24};
+        // PMS/BA/ReLU produces Q24.16. Keep absolute scores in Q24.16 so
+        // max_buffer covers the int8 dot-product sum divided by 8.
+        softmax_input[qconv_i*40 +: 40] = relu_result[qconv_i*40 +: 40];
     end
 end
 
@@ -108,18 +94,15 @@ vec_max row_max_inst (
 
 assign previous_max = max_buffer[row_counter];
 assign previous_sum = sum_buffer[row_counter];
-assign block_max_q8_24 = block_max[31:0];
-assign max_value = (block_max_q8_24 > previous_max) ? block_max_q8_24 : previous_max;
-assign previous_max_ext = {{8{previous_max[31]}}, previous_max};
-assign max_value_ext = {{8{max_value[31]}}, max_value};
-assign exp_max_value = path2_fire ? path2_max_value_ext : max_value_ext;
+assign max_value = (block_max > previous_max) ? block_max : previous_max;
+assign exp_reference_max = path2_fire ? path2_max_value : max_value;
 
 genvar exp_i;
 generate
     for (exp_i = 0; exp_i < 16; exp_i = exp_i + 1) begin : EXP_LANE
         LPW_expo exp_inst (
             .data_in(softmax_input[exp_i*40 +: 40]),
-            .max    (exp_max_value),
+            .max    (exp_reference_max),
             .result (exp_result_vec[exp_i*17 +: 17])
         );
     end
@@ -134,8 +117,8 @@ always @(*) begin
 end
 
 LPW_expo max_delta_exp_inst (
-    .data_in(previous_max_ext),
-    .max    (max_value_ext),
+    .data_in(previous_max),
+    .max    (max_value),
     .result (max_delta_exp)
 );
 
@@ -159,7 +142,6 @@ assign path2_tile_last = (path2_tile_counter == LAST_TILE);
 assign path2_complete = path2_fire && path2_row_last && path2_tile_last;
 
 assign path2_max_value = max_buffer[path2_row_counter];
-assign path2_max_value_ext = {{8{path2_max_value[31]}}, path2_max_value};
 assign path2_sum_value = sum_buffer[path2_row_counter];
 
 LPW_reciprocal path2_reciprocal_inst (
@@ -201,7 +183,7 @@ always @(posedge clk or negedge rst_n) begin
         softmax_reciprocal_debug <= 17'd0;
         softmax_shift_debug_vec <= {16*8{1'b0}};
         for (rst_i = 0; rst_i < 16; rst_i = rst_i + 1) begin
-            max_buffer[rst_i] <= 32'sd0;
+            max_buffer[rst_i] <= 40'sd0;
             sum_buffer[rst_i] <= 28'd0;
         end
     end
@@ -247,7 +229,7 @@ always @(posedge clk or negedge rst_n) begin
             tile_counter <= 6'd0;
             path2_tile_counter <= 6'd0;
             for (rst_i = 0; rst_i < 16; rst_i = rst_i + 1) begin
-                max_buffer[rst_i] <= 32'sd0;
+                max_buffer[rst_i] <= 40'sd0;
                 sum_buffer[rst_i] <= 28'd0;
             end
         end

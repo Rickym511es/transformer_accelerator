@@ -1,7 +1,7 @@
 module tb_LPW_expo;
 
-reg  signed [39:0] data_in;    // Q16.24
-reg  signed [39:0] max;        // Q16.24
+reg  signed [39:0] data_in;    // Q24.16
+reg  signed [39:0] max;        // Q24.16
 reg         [16:0] golden_q16; // Q1.16
 wire        [16:0] result;     // Q1.16
 wire        [16:0] const_result; // Q1.16
@@ -104,12 +104,12 @@ initial begin
         vec_fd = $fopen("testcase/lpw_expo_vectors.txt", "r");
     if (vec_fd == 0) begin
         $display("ERROR: cannot open lpw_expo_vectors.txt in testbench/testcase or testcase");
-        $display("Each line should be: <data_in_q16.24_hex> <max_q16.24_hex> <golden_q1.16_hex>");
+        $display("Each line should be: <data_in_q24.16_hex> <max_q24.16_hex> <golden_q1.16_hex>");
         $finish;
     end
 
     $display("=== LPW_expo precision test start ===");
-    $display("Format: data_in_q16.24_hex max_q16.24_hex golden_q1.16_hex");
+    $display("Format: data_in_q24.16_hex max_q24.16_hex golden_q1.16_hex");
 
     while (!$feof(vec_fd)) begin
         scan_count = $fscanf(vec_fd, "%h %h %h\n", data_in, max, golden_q16);
@@ -143,8 +143,8 @@ initial begin
             result_real   = q16_to_real(result);
             const_result_real = q16_to_real(const_result);
             golden_real   = q16_to_real(golden_q16);
-            diff_real     = diff_dbg / 16777216.0;
-            f_real        = f_dbg / 16777216.0;
+            diff_real     = diff_dbg / 65536.0;
+            f_real        = f_dbg / 65536.0;
             exp_frac_real = exp_frac_dbg / 65536.0;
             const_exp_frac_real = const_exp_frac_dbg / 65536.0;
             if (golden_real != 0.0)
@@ -177,11 +177,11 @@ initial begin
 
             case_count = case_count + 1;
             $display("LPW_PREC case=%0d data=%0.8f max=%0.8f result=%0.8f golden=%0.8f loss=%0.8f abs_loss=%0.8f loss_pct=%0.4f%%",
-                     case_count, data_in / 16777216.0, max / 16777216.0, result_real, golden_real, loss_real, abs_loss_real, loss_pct);
+                     case_count, data_in / 65536.0, max / 65536.0, result_real, golden_real, loss_real, abs_loss_real, loss_pct);
             $display("LPW_DEBUG case=%0d diff=%0.8f I=%0d F=%0.8f seg=%0d exp_frac=%0.8f shift=%0d loss_q16=%0d",
-                     case_count, diff_real, i_dbg, f_real, dut.F[23:21], exp_frac_real, shift_dbg, loss_q16);
+                     case_count, diff_real, i_dbg, f_real, dut.F[15:13], exp_frac_real, shift_dbg, loss_q16);
             $display("CONST_PREC case=%0d data=%0.8f max=%0.8f result=%0.8f golden=%0.8f loss=%0.8f abs_loss=%0.8f loss_pct=%0.4f%%",
-                     case_count, data_in / 16777216.0, max / 16777216.0, const_result_real, golden_real, const_loss_real, const_abs_loss_real, const_loss_pct);
+                     case_count, data_in / 65536.0, max / 65536.0, const_result_real, golden_real, const_loss_real, const_abs_loss_real, const_loss_pct);
             $display("CONST_DEBUG case=%0d diff=%0.8f I=%0d F=%0.8f seg=%0d exp_frac=%0.8f shift=%0d loss_q16=%0d",
                      case_count, diff_real, const_i_dbg, f_real, const_dut.frac_seg, const_exp_frac_real, const_shift_dbg, const_loss_q16);
         end
