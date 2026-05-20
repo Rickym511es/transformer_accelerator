@@ -118,6 +118,80 @@ always @(*) begin
 end
 endmodule
 
+module constant_estimation_expo(data_in, max, result);
+input  signed [39:0] data_in; //Q24.16
+input  signed [39:0] max;     //Q24.16
+output reg    [16:0] result;  //Q1.16
+
+localparam [16:0] ONE_Q16 = 17'd65536;
+
+wire signed [39:0] diff;
+assign diff = data_in - max;
+
+wire signed [23:0] I;
+wire        [15:0] F;
+wire        [4:0]  frac_seg;
+
+assign I = diff[39:16];
+assign F = diff[15:0];
+assign frac_seg = F[15:11];
+
+reg [17:0] exp_frac;
+always @(*) begin
+    case (frac_seg)
+        5'd0:  exp_frac = 18'd65536;
+        5'd1:  exp_frac = 18'd66971;
+        5'd2:  exp_frac = 18'd68438;
+        5'd3:  exp_frac = 18'd69936;
+        5'd4:  exp_frac = 18'd71468;
+        5'd5:  exp_frac = 18'd73032;
+        5'd6:  exp_frac = 18'd74632;
+        5'd7:  exp_frac = 18'd76266;
+        5'd8:  exp_frac = 18'd77936;
+        5'd9:  exp_frac = 18'd79642;
+        5'd10: exp_frac = 18'd81386;
+        5'd11: exp_frac = 18'd83169;
+        5'd12: exp_frac = 18'd84990;
+        5'd13: exp_frac = 18'd86851;
+        5'd14: exp_frac = 18'd88752;
+        5'd15: exp_frac = 18'd90696;
+        5'd16: exp_frac = 18'd92682;
+        5'd17: exp_frac = 18'd94711;
+        5'd18: exp_frac = 18'd96785;
+        5'd19: exp_frac = 18'd98905;
+        5'd20: exp_frac = 18'd101070;
+        5'd21: exp_frac = 18'd103283;
+        5'd22: exp_frac = 18'd105545;
+        5'd23: exp_frac = 18'd107856;
+        5'd24: exp_frac = 18'd110218;
+        5'd25: exp_frac = 18'd112631;
+        5'd26: exp_frac = 18'd115098;
+        5'd27: exp_frac = 18'd117618;
+        5'd28: exp_frac = 18'd120194;
+        5'd29: exp_frac = 18'd122825;
+        5'd30: exp_frac = 18'd125515;
+        default: exp_frac = 18'd128263;
+    endcase
+end
+
+wire [23:0] neg_i_mag;
+wire [4:0]  shift_amt;
+wire [17:0] exp_full;
+
+assign neg_i_mag = ~I + 24'd1;
+assign shift_amt = (!diff[39]) ? 5'd0 : ((|neg_i_mag[23:5]) || (neg_i_mag[4:0] > 5'd18)) ? 5'd18 : neg_i_mag[4:0];
+assign exp_full = exp_frac >> shift_amt;
+
+always @(*) begin
+    if (!diff[39])
+        result = ONE_Q16;
+    else if (exp_full >= {1'b0, ONE_Q16})
+        result = ONE_Q16;
+    else
+        result = exp_full[16:0];
+end
+endmodule
+
 // Reciprocal dataflow for softmax normalization:
 // 1. Sum the 16 exponential outputs externally into data_in (UQ12.16).
 // 2. Normalize data_in = 2^e * u, where u is in [1, 2). 
@@ -195,6 +269,89 @@ always @(*) begin
         result = ONE_Q16;
     else
         result = recip_full_q16[16:0];
+end
+endmodule
+
+module constant_estimation_reciprocal(data_in, result);
+input  [27:0] data_in; //UQ12.16
+output reg [16:0] result; //Q1.16
+
+localparam [16:0] ONE_Q16 = 17'd65536;
+
+reg [4:0] exp_shift;
+always @(*) begin
+    casex (data_in[27:16])
+        12'b1xxxxxxxxxxx: exp_shift = 5'd11;
+        12'b01xxxxxxxxxx: exp_shift = 5'd10;
+        12'b001xxxxxxxxx: exp_shift = 5'd9;
+        12'b0001xxxxxxxx: exp_shift = 5'd8;
+        12'b00001xxxxxxx: exp_shift = 5'd7;
+        12'b000001xxxxxx: exp_shift = 5'd6;
+        12'b0000001xxxxx: exp_shift = 5'd5;
+        12'b00000001xxxx: exp_shift = 5'd4;
+        12'b000000001xxx: exp_shift = 5'd3;
+        12'b0000000001xx: exp_shift = 5'd2;
+        12'b00000000001x: exp_shift = 5'd1;
+        default:          exp_shift = 5'd0;
+    endcase
+end
+
+wire [27:0] norm_full;
+wire [16:0] u_q16;
+wire [4:0]  frac_seg;
+reg  [16:0] recip_u_q16;
+wire [16:0] recip_full_q16;
+
+assign norm_full = data_in >> exp_shift;
+assign u_q16 = (data_in == 28'd0) ? ONE_Q16 : norm_full[16:0];
+assign frac_seg = u_q16[15:11];
+
+always @(*) begin
+    case (frac_seg)
+        5'd0:  recip_u_q16 = 17'd65536;
+        5'd1:  recip_u_q16 = 17'd63550;
+        5'd2:  recip_u_q16 = 17'd61681;
+        5'd3:  recip_u_q16 = 17'd59919;
+        5'd4:  recip_u_q16 = 17'd58254;
+        5'd5:  recip_u_q16 = 17'd56680;
+        5'd6:  recip_u_q16 = 17'd55188;
+        5'd7:  recip_u_q16 = 17'd53773;
+        5'd8:  recip_u_q16 = 17'd52429;
+        5'd9:  recip_u_q16 = 17'd51150;
+        5'd10: recip_u_q16 = 17'd49932;
+        5'd11: recip_u_q16 = 17'd48771;
+        5'd12: recip_u_q16 = 17'd47663;
+        5'd13: recip_u_q16 = 17'd46603;
+        5'd14: recip_u_q16 = 17'd45590;
+        5'd15: recip_u_q16 = 17'd44620;
+        5'd16: recip_u_q16 = 17'd43691;
+        5'd17: recip_u_q16 = 17'd42799;
+        5'd18: recip_u_q16 = 17'd41943;
+        5'd19: recip_u_q16 = 17'd41121;
+        5'd20: recip_u_q16 = 17'd40330;
+        5'd21: recip_u_q16 = 17'd39569;
+        5'd22: recip_u_q16 = 17'd38836;
+        5'd23: recip_u_q16 = 17'd38130;
+        5'd24: recip_u_q16 = 17'd37449;
+        5'd25: recip_u_q16 = 17'd36792;
+        5'd26: recip_u_q16 = 17'd36158;
+        5'd27: recip_u_q16 = 17'd35545;
+        5'd28: recip_u_q16 = 17'd34953;
+        5'd29: recip_u_q16 = 17'd34380;
+        5'd30: recip_u_q16 = 17'd33825;
+        default: recip_u_q16 = 17'd33288;
+    endcase
+end
+
+assign recip_full_q16 = recip_u_q16 >> exp_shift;
+
+always @(*) begin
+    if (data_in == 28'd0)
+        result = 17'd0;
+    else if (recip_full_q16 >= ONE_Q16)
+        result = ONE_Q16;
+    else
+        result = recip_full_q16;
 end
 endmodule
 
