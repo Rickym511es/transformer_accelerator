@@ -34,6 +34,7 @@ real golden_e_softmax [0:TOTAL_VALUES-1];
 real golden_2_softmax [0:TOTAL_VALUES-1];
 real hw_softmax [0:TOTAL_VALUES-1];
 real row_max_real [0:ROWS-1];
+real row_max_q24_real [0:ROWS-1];
 real row_output_sum [0:ROWS-1];
 real row_abs_loss_e_sum [0:ROWS-1];
 real row_sq_loss_e_sum [0:ROWS-1];
@@ -142,6 +143,7 @@ task init_arrays;
     begin
         for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
             row_max_real[row_idx] = -1.0e30;
+            row_max_q24_real[row_idx] = -1.0e30;
             row_output_sum[row_idx] = 0.0;
             row_abs_loss_e_sum[row_idx] = 0.0;
             row_sq_loss_e_sum[row_idx] = 0.0;
@@ -171,6 +173,7 @@ task load_testcase;
     integer lane_idx;
     integer idx;
     real score_value;
+    real score_q24_value;
     real golden_e_value;
     real golden_2_value;
     begin
@@ -207,6 +210,10 @@ task load_testcase;
 
                 if (score_value > row_max_real[row_idx])
                     row_max_real[row_idx] = score_value;
+
+                score_q24_value = q24_to_real(real_to_q24(score_value));
+                if (score_q24_value > row_max_q24_real[row_idx])
+                    row_max_q24_real[row_idx] = score_q24_value;
             end
             else if (scan_count != -1) begin
                 $display("ERROR: testcase format mismatch. Expected columns:");
@@ -277,19 +284,22 @@ task check_path1_max_buffer;
     integer row_idx;
     real got_max;
     real max_loss;
+    real real_score_loss;
     begin
         $display("=== PATH1 MAX BUFFER CHECK AGAINST TESTCASE SCORE ===");
-        $display("row  max_buf       score_max     max_loss");
+        $display("row  max_buf       q24_score_max score_max     q24_max_loss real_score_loss");
 
         for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
             got_max = q24_to_real(dut.max_buffer[row_idx]);
-            max_loss = got_max - row_max_real[row_idx];
-            $display("%2d   %0.8f   %0.8f   %0.8f",
-                     row_idx, got_max, row_max_real[row_idx], max_loss);
+            max_loss = got_max - row_max_q24_real[row_idx];
+            real_score_loss = got_max - row_max_real[row_idx];
+            $display("%2d   %0.8f   %0.8f   %0.8f   %0.8f   %0.8f",
+                     row_idx, got_max, row_max_q24_real[row_idx], row_max_real[row_idx],
+                     max_loss, real_score_loss);
 
             if (abs_real(max_loss) > 0.000001) begin
                 error_count = error_count + 1;
-                $display("ERROR: max_buffer does not match testcase score max at row=%0d", row_idx);
+                $display("ERROR: max_buffer does not match Q24.16 testcase score max at row=%0d", row_idx);
             end
         end
     end
