@@ -3,7 +3,7 @@
 // python testbench/generate_ppu_cases.py
 //
 // Run example:
-// iverilog -g2012 -o tb_PPUquant.vvp PPU_modules.v softmax_modules.v PPU.v testbench/tb_PPUquant.v
+// iverilog -g2012 -I. -o tb_PPUquant.vvp RTL/PPU/PPU_modules.v RTL/PPU/softmax_modules.v RTL/PPU/PPU.v testbench/PPU/modules/tb_PPUquant.v
 // vvp tb_PPUquant.vvp
 
 module tb_PPUquant;

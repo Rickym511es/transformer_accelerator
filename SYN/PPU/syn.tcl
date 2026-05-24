@@ -44,9 +44,9 @@ set DESIGN "PPU"
 #  Read RTL Code
 #======================================================
 analyze -format verilog [list \
-    "../../PPU/softmax_modules.v" \
-    "../../PPU/PPU_modules.v" \
-    "../../PPU/PPU.v" \
+    "../../RTL/PPU/softmax_modules.v" \
+    "../../RTL/PPU/PPU_modules.v" \
+    "../../RTL/PPU/PPU.v" \
 ]
 elaborate $DESIGN
 current_design $DESIGN

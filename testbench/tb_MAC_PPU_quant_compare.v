@@ -11,7 +11,7 @@
 //
 // Run example from the repo root:
 //   iverilog -g2012 -I. -o tb_MAC_PPU_quant_compare.vvp \
-//       PPU/softmax_modules.v PPU/PPU.v \
+//       RTL/PPU/softmax_modules.v RTL/PPU/PPU_modules.v RTL/PPU/PPU.v \
 //       testbench/tb_MAC_PPU_quant_compare.v
 //   vvp tb_MAC_PPU_quant_compare.vvp
 

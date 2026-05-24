@@ -13,7 +13,8 @@
 //
 // Run example from the repo root:
 //   iverilog -g2012 -I. -o tb_MAC_PPU_hw_flow.vvp \
-//       MAC/MAC.v MAC/tile.v PPU/softmax_modules.v PPU/PPU.v \
+//       RTL/MAC/MAC.v RTL/MAC/tile.v \
+//       RTL/PPU/softmax_modules.v RTL/PPU/PPU_modules.v RTL/PPU/PPU.v \
 //       testbench/tb_MAC_PPU_hw_flow.v
 //   vvp tb_MAC_PPU_hw_flow.vvp
 

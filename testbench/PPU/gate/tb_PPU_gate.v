@@ -22,11 +22,11 @@
 //
 // RTL run example (sanity check before gate sim):
 //   iverilog -g2012 -I. -o tb_PPU_gate.vvp \
-//       PPU/softmax_modules.v PPU/PPU_modules.v PPU/PPU.v \
-//       testbench/PPU_gate/tb_PPU_gate.v
+//       RTL/PPU/softmax_modules.v RTL/PPU/PPU_modules.v RTL/PPU/PPU.v \
+//       testbench/PPU/gate/tb_PPU_gate.v
 //   vvp tb_PPU_gate.vvp
 //
-// Gate sim is driven by GATE/PPU/gate.f.
+// Gate sim is driven by GLS/PPU/gate.f.
 
 module tb_PPU_gate;
 

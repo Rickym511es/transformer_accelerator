@@ -45,8 +45,8 @@ set DESIGN "tile"
 #======================================================
 # tile.v uses SystemVerilog unpacked array ports, so use sverilog
 analyze -format sverilog [list \
-    "../../MAC/MAC.v" \
-    "../../MAC/tile.v" \
+    "../../RTL/MAC/MAC.v" \
+    "../../RTL/MAC/tile.v" \
 ]
 elaborate $DESIGN
 current_design $DESIGN

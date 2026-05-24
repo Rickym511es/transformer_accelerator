@@ -9,7 +9,7 @@
 // still filled as round(score * 8) so the external input shape is realistic.
 //
 // Run from the repo root:
-// iverilog -g2012 -I. -o tb_PPU_new_quant.vvp PPU/PPU_modules.v PPU/softmax_modules.v PPU/PPU.v testbench/PPU_modules/tb_PPU_new_quant.v
+// iverilog -g2012 -I. -o tb_PPU_new_quant.vvp RTL/PPU/PPU_modules.v RTL/PPU/softmax_modules.v RTL/PPU/PPU.v testbench/PPU/modules/tb_PPU_new_quant.v
 // vvp tb_PPU_new_quant.vvp
 
 module tb_PPU_new_quant;

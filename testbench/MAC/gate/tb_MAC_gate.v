@@ -2,7 +2,7 @@
 //
 // MAC (tile) gate-level testbench.
 //
-// Same load logic and compare flow as testbench/MAC_modules/tb_MAC.v.
+// Same load logic and compare flow as testbench/MAC/modules/tb_MAC.v.
 // Only difference: the post-synthesis netlist has `tile`'s unpacked-array
 // ports flattened to packed buses, so this bench connects through flat
 // buses and packs/unpacks at the boundary.
@@ -12,10 +12,10 @@
 //
 // RTL sanity check (before gate sim):
 //   iverilog -g2012 -I. -o tb_MAC_gate.vvp \
-//       MAC/MAC.v MAC/tile.v testbench/MAC_gate/tb_MAC_gate.v
+//       RTL/MAC/MAC.v RTL/MAC/tile.v testbench/MAC/gate/tb_MAC_gate.v
 //   vvp tb_MAC_gate.vvp
 //
-// Gate sim is driven by GATE/MAC/gate.f.
+// Gate sim is driven by GLS/MAC/gate.f.
 
 `define CYCLE       10.0
 `define PAT_NUM     1
