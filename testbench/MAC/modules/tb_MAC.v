@@ -19,23 +19,42 @@ reg rst_n;
 reg [255:0] Amem [0:15];
 reg [255:0] Bmem [0:15];
 reg [255:0] vecB;
-// reg int4_gate;
-// reg int8_gate;
-// reg VSQ_gate;
 reg tile_done;
-reg [23:0] latch_array [0:15][0:15];
 reg start;
+
+// tile.v is now pure Verilog-2001 with flat packed ports.
+// vecA       : 16 * 256 = 4096 bits, lane k at [k*256 +: 256]
+// latch_array: 16 lanes * 16 cols * 24 b = 6144 bits,
+//              element (lane,col) at [(lane*16 + col)*24 +: 24]
+wire [16*256-1:0]    vecA_flat;
+wire [16*16*24-1:0]  latch_array_flat;
+
+genvar gi;
+generate
+    for (gi = 0; gi < 16; gi = gi + 1) begin : g_pack_vecA
+        assign vecA_flat[gi*256 +: 256] = Amem[gi];
+    end
+endgenerate
+
+// Local 2D view for the existing compare loop.
+reg [23:0] latch_array [0:15][0:15];
+integer ui, uj;
+always @(*) begin
+    for (ui = 0; ui < 16; ui = ui + 1) begin
+        for (uj = 0; uj < 16; uj = uj + 1) begin
+            latch_array[ui][uj] =
+                latch_array_flat[(ui*16 + uj)*24 +: 24];
+        end
+    end
+end
 
 tile uut (
     .clk(clk),
     .rst_n(rst_n),
-    .vecA(Amem),
+    .vecA(vecA_flat),
     .vecB(vecB),
-    // .int4_gate(int4_gate),
-    // .int8_gate(int8_gate),
-    // .VSQ_gate(VSQ_gate),
     .tile_done(tile_done),
-    .latch_array(latch_array),
+    .latch_array(latch_array_flat),
     .start(start)
 );
 

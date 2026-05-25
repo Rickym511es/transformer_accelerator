@@ -14,14 +14,30 @@ initial clk = 0;
 always #5 clk = ~clk;   // 100 MHz
 
 // ─── DUT ports ────────────────────────────────────────────────────────────────
+// quant_round is now pure Verilog-2001 with packed-bus ports.
+//   data_in   : COLS * IN_W  bits, element c at [c*IN_W +: IN_W]
+//   quant_out : COLS * OUT_W bits, element c at [c*OUT_W +: OUT_W]
 reg                    start;
 reg                    valid_in;
-reg  signed [IN_W-1:0] data_in  [0:COLS-1];
+reg  signed [IN_W-1:0] data_in  [0:COLS-1];   // bench-side view
 
 wire [IN_W-1:0]         scale;
 wire                    scale_valid;
 wire                    valid_out;
-wire signed [OUT_W-1:0] quant_out [0:COLS-1];
+
+wire [COLS*IN_W-1:0]    data_in_flat;
+wire [COLS*OUT_W-1:0]   quant_out_flat;
+wire signed [OUT_W-1:0] quant_out [0:COLS-1]; // bench-side view
+
+genvar gc;
+generate
+    for (gc = 0; gc < COLS; gc = gc + 1) begin : g_pack_data_in
+        assign data_in_flat[gc*IN_W +: IN_W] = data_in[gc];
+    end
+    for (gc = 0; gc < COLS; gc = gc + 1) begin : g_unpack_quant_out
+        assign quant_out[gc] = quant_out_flat[gc*OUT_W +: OUT_W];
+    end
+endgenerate
 
 quant_round #(
     .ROWS (ROWS),
@@ -33,11 +49,11 @@ quant_round #(
     .rst_n      (rst_n),
     .start      (start),
     .valid_in   (valid_in),
-    .data_in    (data_in),
+    .data_in    (data_in_flat),
     .scale      (scale),
     .scale_valid(scale_valid),
     .valid_out  (valid_out),
-    .quant_out  (quant_out)
+    .quant_out  (quant_out_flat)
 );
 
 // ─── Reference model ──────────────────────────────────────────────────────────

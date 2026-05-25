@@ -60,6 +60,29 @@ reg mac_start;
 reg mac_tile_done;
 wire [23:0] mac_latch_array [0:VL-1][0:AD-1];
 
+// tile.v is now pure Verilog-2001 with flat packed ports.
+// Pack mac_vecA into one bus and unpack the flat latch_array back into
+// the 2-D view the existing compare code uses.
+wire [VL*256-1:0]    mac_vecA_flat;
+wire [VL*AD*24-1:0]  mac_latch_array_flat;
+
+genvar gva;
+generate
+    for (gva = 0; gva < VL; gva = gva + 1) begin : g_pack_mac_vecA
+        assign mac_vecA_flat[gva*256 +: 256] = mac_vecA[gva];
+    end
+endgenerate
+
+genvar gli, glj;
+generate
+    for (gli = 0; gli < VL; gli = gli + 1) begin : g_unpack_la_row
+        for (glj = 0; glj < AD; glj = glj + 1) begin : g_unpack_la_col
+            assign mac_latch_array[gli][glj] =
+                mac_latch_array_flat[(gli*AD + glj)*24 +: 24];
+        end
+    end
+endgenerate
+
 reg ppu_valid;
 reg signed [16*24-1:0] ppu_mac_result_vec;
 wire ppu_softmax_valid;
@@ -119,10 +142,10 @@ integer worst_quant_mac_score;
 tile mac_dut (
     .clk        (clk),
     .rst_n      (rst_n),
-    .vecA       (mac_vecA),
+    .vecA       (mac_vecA_flat),
     .vecB       (mac_vecB),
     .tile_done  (mac_tile_done),
-    .latch_array(mac_latch_array),
+    .latch_array(mac_latch_array_flat),
     .start      (mac_start)
 );
 

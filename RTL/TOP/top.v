@@ -21,8 +21,10 @@
 // to read up through cycle 31.
 //
 // vecA is exposed as a packed bus on the top-level boundary so the
-// synthesized netlist has clean Verilog ports (no unpacked-array
+// synthesized netlist has clean Verilog-2001 ports (no unpacked-array
 // flattening surprises like we hit on the standalone MAC gate sim).
+// tile.v itself is now flat too, so vecA/latch_array pass straight
+// through with no pack/unpack wrappers.
 
 module top (
     input  wire                 clk,
@@ -40,21 +42,13 @@ module top (
     output wire [23:0]          softmax_scale
 );
 
-    // Unpack vecA for tile.v's unpacked-array port.
-    wire [255:0] vecA_unpacked [0:15];
-    genvar gu;
-    generate
-        for (gu = 0; gu < 16; gu = gu + 1) begin : g_unpack_vecA
-            assign vecA_unpacked[gu] = vecA[gu*256 +: 256];
-        end
-    endgenerate
-
-    wire [23:0] latch_array [0:15][0:15];
+    // latch_array layout: element (lane,col) at [(lane*16 + col)*24 +: 24]
+    wire [16*16*24-1:0] latch_array;
 
     tile u_tile (
         .clk        (clk),
         .rst_n      (rst_n),
-        .vecA       (vecA_unpacked),
+        .vecA       (vecA),
         .vecB       (vecB),
         .start      (start),
         .tile_done  (tile_done),
@@ -79,15 +73,11 @@ module top (
 
     wire [3:0] row_idx = phase[4:1];
 
-    // Pack the currently-selected row of latch_array into a flat bus
-    // for the FSM to register into ppu_mac_result_vec_r.
-    wire [16*24-1:0] row_bus;
-    genvar gr;
-    generate
-        for (gr = 0; gr < 16; gr = gr + 1) begin : g_pack_row
-            assign row_bus[gr*24 +: 24] = latch_array[row_idx][gr];
-        end
-    endgenerate
+    // Pull the currently-selected row of latch_array (16 cols * 24 b each)
+    // out of the flat bus. Element (lane=row_idx, col=gr) sits at
+    // (row_idx*16 + gr)*24, which is a contiguous 16*24 = 384-bit slice
+    // starting at row_idx*16*24.
+    wire [16*24-1:0] row_bus = latch_array[row_idx*16*24 +: 16*24];
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
