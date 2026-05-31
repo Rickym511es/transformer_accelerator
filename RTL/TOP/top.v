@@ -60,9 +60,13 @@ module top (
     // ------------------------------------------------------------------
     // S_IDLE: waiting for tile_done.  ppu_valid_r held low.
     // S_FEED: 32 cycles.  phase = 0..31.
-    //   phase[0] == 0 (even): low half  -> drive valid=1, data = row_bus
+    //   phase[0] == 0 (even): low half  -> drive valid=1
     //   phase[0] == 1 (odd ): high half -> drive valid=0
     //   row index = phase[4:1], walks 0..15 across the 32 cycles.
+    //   mac_result_vec is held STABLE across both half-cycles of a row (it is
+    //   NOT zeroed on the high half).  row_idx is identical on both cycles, so
+    //   row_bus already carries the correct data; holding it lets the PPU drop
+    //   its internal path-2 row_buffer (latch_array is the single tile store).
     localparam S_IDLE = 1'b0;
     localparam S_FEED = 1'b1;
 
@@ -96,14 +100,11 @@ module top (
                         state <= S_FEED;
                 end
                 S_FEED: begin
-                    if (phase[0] == 1'b0) begin
-                        ppu_valid_r          <= 1'b1;
-                        ppu_mac_result_vec_r <= row_bus;
-                    end
-                    else begin
-                        ppu_valid_r          <= 1'b0;
-                        ppu_mac_result_vec_r <= {16*24{1'b0}};
-                    end
+                    // Drive data every cycle; row_idx (phase[4:1]) is the same
+                    // on the low/high pair, so mac_result_vec stays stable for
+                    // the full row.  Only `valid` toggles (high only on low half).
+                    ppu_valid_r          <= (phase[0] == 1'b0);
+                    ppu_mac_result_vec_r <= row_bus;
                     if (phase == 5'd31) begin
                         state <= S_IDLE;
                         phase <= 5'd0;

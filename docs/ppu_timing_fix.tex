@@ -1,0 +1,202 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+
+% --- code listing style for Verilog-ish path snippets ---
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  keepspaces=true,
+}
+
+\title{PPU Timing Closure: Path-1 Pipelining}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Original Architecture (Before Fix)}
+
+The PPU consumes one $16\times1$ MAC result row per call and performs a
+FlashAttention-style streaming softmax over $64$ tiles. Path-1 builds the
+running row maximum and exponent sum; Path-2 replays the tiles to emit the
+quantized softmax output. Each row is processed over two half-cycles (low/high)
+so that a single folded engine of $8$ \texttt{LPW\_expo} units is time-shared
+across the $16$ lanes (initiation interval $\text{II}=2$ cycles/row).
+
+The problem: Path-1 executed its \emph{entire} datapath in a single clock cycle:
+
+\begin{lstlisting}
+vec_max  ->  new_max compare  ->  LPW_expo(delta)  ->  x prev_sum  ->  + exp_sum  ->  sum_buffer
+\end{lstlisting}
+
+This chains a max-reduction, an exponent unit, a multiplier and two adders in
+series within one cycle.
+
+\section{First Synthesis Result}
+
+Synthesis at a $10$~ns clock period ($100$~MHz) reported a setup violation on
+this Path-1 cone:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Quantity & Value (ns) \\
+\midrule
+Data required time & $10.82$ \\
+Data arrival time  & $15.14$ \\
+\midrule
+\textbf{Slack (VIOLATED)} & $\mathbf{-4.32}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The arrival time of $\sim15$~ns confirms $\sim14$~ns of combinational logic
+(after subtracting the $1$~ns ideal clock-network delay) in a single cycle.
+Breaking the reported path down by sub-block:
+
+\begin{center}
+\begin{tabular}{llr}
+\toprule
+Path window (ns) & Block & $\Delta$ (ns) \\
+\midrule
+$1.66 \to 5.31$  & \texttt{vec\_max} (row-max reduction) & $3.65$ \\
+$5.31 \to 7.15$  & \texttt{new\_max} compare + mux glue   & $1.84$ \\
+$7.15 \to 10.91$ & \texttt{LPW\_expo} (sub + mult + add)  & $3.76$ \\
+$11.57 \to 13.64$& \texttt{mult\_132} ($\text{prev\_sum}\times\delta$) & $2.07$ \\
+$13.92 \to 14.64$& \texttt{add\_166} (accumulate)         & $0.72$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The single largest block is the row-max reduction (\texttt{vec\_max},
+$3.65$~ns), but note that \texttt{vec\_max} and \texttt{LPW\_expo} together are
+already $\sim10.6$~ns, so no single register cut can close timing---at least two
+cuts are required.
+
+\section{Fix: 4-Stage Path-1 Pipeline}
+
+Path-1 was restructured into a four-stage pipeline. Throughput is unchanged
+(still $\text{II}=2$ cycles/row); only the latency increases by $2$ cycles.
+
+\begin{center}
+\begin{tabular}{cllr}
+\toprule
+Stage & Name & Work & Est.\ logic (ns) \\
+\midrule
+M  & Max      & \texttt{vec\_max} + \texttt{new\_max}; read max/sum buffers & $\sim4.5$ \\
+E0 & Exp-low  & folded \texttt{LPW} low $8$ lanes + delta-exp factor       & $\sim5.0$ \\
+E1 & Exp-high & folded \texttt{LPW} high $8$ lanes + current exp sum        & $\sim5.0$ \\
+A  & Accum    & $\text{prev\_sum}\times\delta + \text{exp\_sum}$; writeback & $\sim3.5$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+(The per-stage values above are \emph{estimates}; the synthesizer re-optimizes
+across the new register boundaries, so the true per-stage delays will come from
+the re-run reported in Section~\ref{sec:after}.)
+
+\paragraph{Pipeline overlap.} With $\text{II}=2$, the $16$ rows of a tile launch
+on cycles $0,2,\dots,30$ and each writes back $3$ cycles after launch. At most
+$2$ rows are ever in flight, so only two row buffers are needed. The extra
+latency appears \emph{once per tile} (the last row writes back $2$ cycles later)
+and is absorbed by the existing inter-tile gap (MAC runs at $35$~cycles/tile vs.\
+PPU's $32$-cycle drain).
+
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\footnotesize, x=0.85cm, y=0.6cm]
+  % axis
+  \draw[->] (0,0) -- (12,0) node[right]{cycle};
+  \foreach \c/\lab in {0/0,2/2,4/4,6/6,8/8,10/30} {
+    \draw (\c,0.1) -- (\c,-0.1) node[below]{\lab};
+  }
+  % row0
+  \node[anchor=west] at (-1.6,1) {row0:};
+  \node at (0,1){M}; \node at (2,1){E1}; \node at (3,1){A};
+  \node at (1,1.6){\tiny E0};
+  % row1
+  \node[anchor=west] at (-1.6,2) {row1:};
+  \node at (2,2){M}; \node at (4,2){E1}; \node at (5,2){A};
+  \node at (3,2.6){\tiny E0};
+  % row2
+  \node[anchor=west] at (-1.6,3) {row2:};
+  \node at (4,3){M}; \node at (6,3){E1}; \node at (7,3){A};
+  \node at (5,3.6){\tiny E0};
+  % dots
+  \node at (8.5,3.2){$\cdots$};
+  % row15
+  \node[anchor=west] at (-1.6,4) {row15:};
+  \node at (10,4){M}; \node at (12,4){E1}; \node at (13,4){A};
+\end{tikzpicture}
+\end{center}
+
+\paragraph{Key design choices.}
+\begin{itemize}
+  \item \textbf{Kept the 8-LPW folding.} Un-folding to $16$ \texttt{LPW\_expo}
+        units would remove the low/high split but roughly triple the exponent
+        multiplier area; the folded engine is the better area$\times$time point.
+  \item \textbf{Folded-engine half-select driven by the pipeline's own valid
+        bits} (\texttt{e1\_valid}), not the live \texttt{valid} input, so the
+        high-half selection stays correct when the feeder pauses at a tile's
+        last row.
+  \item \textbf{Removed the PPU-internal \texttt{row\_buffer}.} The MAC tile's
+        \texttt{latch\_array} already stores the whole tile, so the top-level
+        feeder now holds \texttt{mac\_result\_vec} stable across both half-cycles
+        of a row (only \texttt{valid} toggles), and Path-2 reads it directly.
+        This removes one register bank.
+  \item \textbf{Path-2 datapath left functionally unchanged} to limit the blast
+        radius of the change.
+\end{itemize}
+
+\paragraph{Files changed.}
+\texttt{RTL/PPU/PPU.v} (pipeline), \texttt{RTL/TOP/top.v} (stable-data feeder),
+\texttt{testbench/tb\_MAC\_PPU\_hw\_flow.v} (drain + hold-data for the $+2$-cycle
+latency). \texttt{tb\_top.v} needed no change (handshake-based).
+
+\section{Verification (RTL)}
+
+Both functional regressions pass at RTL:
+\begin{itemize}
+  \item \texttt{tb\_top} --- handshake-based, latency-tolerant golden check: \textbf{PASS}.
+  \item \texttt{tb\_MAC\_PPU\_hw\_flow} --- rigid two-cycle protocol with the
+        latency/hold-data fixes: \textbf{PASS}.
+\end{itemize}
+
+\section{Post-Fix Synthesis Result}
+\label{sec:after}
+
+% =====================================================================
+% TODO: fill in after re-running synthesis on the 90nm library.
+% =====================================================================
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Quantity & Value (ns) \\
+\midrule
+Clock period (target) & \texttt{<fill>} \\
+Data required time    & \texttt{<fill>} \\
+Data arrival time     & \texttt{<fill>} \\
+\midrule
+\textbf{Slack}        & \texttt{<fill>} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent New critical path: \texttt{<fill: start/end point>}.
+
+\paragraph{Expected next bottleneck.} Once Path-1 closes, the new critical path
+is most likely in Path-2: the \texttt{LPW\_reciprocal} followed by the constant
+divider \texttt{path2\_scale\_numer / 127}. If it violates, the same pipelining
+approach applies.
+
+\end{document}

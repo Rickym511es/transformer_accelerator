@@ -1,0 +1,21 @@
+# Local Claude Code agent/memory state
+.claude/
+
+# LaTeX build artifacts (keep the .tex sources)
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+
+# Simulation artifacts
+*.vvp
+*.vcd
+simv
+simv.daidir/
+csrc/
+*.key
+ucli.key
+DVEfiles/

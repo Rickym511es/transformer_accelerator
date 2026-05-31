@@ -742,8 +742,12 @@ task run_ppu_tile;
             #1;
             check_no_ppu_output(pass_idx, m_tile_idx, n_tile_idx, row_lane);
 
+            // High half-cycle: drop valid but HOLD mac_result_vec stable.
+            // PATH-2 reads mac_result_vec directly on the high cycle now (the
+            // PPU no longer keeps an internal row_buffer), so zeroing the data
+            // here would corrupt the high-half exp lanes.
             @(negedge clk);
-            clear_ppu_input;
+            ppu_valid = 1'b0;
 
             @(posedge clk);
             #1;
@@ -789,6 +793,13 @@ task run_row_group;
                 run_mac_tile(pass_idx, m_tile_idx, n_tile_idx);
                 run_ppu_tile(pass_idx, m_tile_idx, n_tile_idx);
             end
+
+            // PATH-1 is now a 4-stage pipeline (+2 cycle latency): the last
+            // row's max/sum writeback and the path2_mode switch land a few
+            // cycles after the final row is fed.  Drain before sampling
+            // path2_mode.  (Data checks unaffected: path1 emits no output and
+            // path2 is unchanged.)
+            repeat (3) @(posedge clk);
 
             if ((pass_idx == 0) && (ppu_dut.path2_mode !== 1'b1)) begin
                 protocol_error_count = protocol_error_count + 1;
