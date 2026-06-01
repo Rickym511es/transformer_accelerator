@@ -2,29 +2,6 @@
 //
 // top: integrated MAC tile + PPU.
 //
-// Bench drives the MAC operand side exactly like tb_MAC.v's pattern
-// (vecA / vecB / start / tile_done).  An internal row-feeder FSM
-// takes over once tile_done fires: it reads tile.latch_array directly
-// (latch_array itself acts as the single buffer; tile.v only updates
-// it on tile_done so it's stable for the 32-cycle PPU drain) and
-// drives PPU's valid / mac_result_vec in the same low/high half
-// pattern the standalone PPU bench used.
-//
-// Inter-tile timing:
-//   tile_done (cycle 0) -> latch_array updates at this edge
-//   cycle 1: FSM enters S_FEED, drives row 0 + valid=1
-//   cycle 2: PPU samples row 0
-//   ...
-//   cycle 33: PPU samples last clear; FSM back to IDLE
-// Next tile_done lands at cycle ~35-36 from the bench's natural cadence
-// (32 vecB cycles + bubbles + tile_done pulse), so latch_array is safe
-// to read up through cycle 31.
-//
-// vecA is exposed as a packed bus on the top-level boundary so the
-// synthesized netlist has clean Verilog-2001 ports (no unpacked-array
-// flattening surprises like we hit on the standalone MAC gate sim).
-// tile.v itself is now flat too, so vecA/latch_array pass straight
-// through with no pack/unpack wrappers.
 
 module top (
     input  wire                 clk,

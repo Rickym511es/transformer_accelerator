@@ -115,27 +115,24 @@ PPU's $32$-cycle drain).
 \begin{center}
 \begin{tikzpicture}[font=\ttfamily\footnotesize, x=0.85cm, y=0.6cm]
   % axis
-  \draw[->] (0,0) -- (12,0) node[right]{cycle};
-  \foreach \c/\lab in {0/0,2/2,4/4,6/6,8/8,10/30} {
+  \draw[->] (0,0) -- (14,0) node[right]{cycle};
+  \foreach \c/\lab in {0/0,2/2,4/4,6/6,8/8,13/33} {
     \draw (\c,0.1) -- (\c,-0.1) node[below]{\lab};
   }
-  % row0
-  \node[anchor=west] at (-1.6,1) {row0:};
-  \node at (0,1){M}; \node at (2,1){E1}; \node at (3,1){A};
-  \node at (1,1.6){\tiny E0};
-  % row1
-  \node[anchor=west] at (-1.6,2) {row1:};
-  \node at (2,2){M}; \node at (4,2){E1}; \node at (5,2){A};
-  \node at (3,2.6){\tiny E0};
+  % row0: M E0 E1 A on cycles 0,1,2,3
+  \node[anchor=west] at (-1.8,1) {row0:};
+  \node at (0,1){M}; \node at (1,1){E0}; \node at (2,1){E1}; \node at (3,1){A};
+  % row1: launched at cycle 2 (II=2)
+  \node[anchor=west] at (-1.8,2) {row1:};
+  \node at (2,2){M}; \node at (3,2){E0}; \node at (4,2){E1}; \node at (5,2){A};
   % row2
-  \node[anchor=west] at (-1.6,3) {row2:};
-  \node at (4,3){M}; \node at (6,3){E1}; \node at (7,3){A};
-  \node at (5,3.6){\tiny E0};
+  \node[anchor=west] at (-1.8,3) {row2:};
+  \node at (4,3){M}; \node at (5,3){E0}; \node at (6,3){E1}; \node at (7,3){A};
   % dots
-  \node at (8.5,3.2){$\cdots$};
-  % row15
-  \node[anchor=west] at (-1.6,4) {row15:};
-  \node at (10,4){M}; \node at (12,4){E1}; \node at (13,4){A};
+  \node at (9,3.4){$\cdots$};
+  % row15: launched at cycle 10
+  \node[anchor=west] at (-1.8,4) {row15:};
+  \node at (10,4){M}; \node at (11,4){E0}; \node at (12,4){E1}; \node at (13,4){A};
 \end{tikzpicture}
 \end{center}
 
