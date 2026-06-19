@@ -12,6 +12,11 @@ AD = 16
 INT8_MIN = -128
 INT8_MAX = 127
 INT24_WIDTH = 24
+LEGACY_SPLIT_PATTERNS = (
+    "vecA_tile[0-9]*.txt",
+    "vecB_stream[0-9]*.txt",
+    "C_golden_tile[0-9]*.txt",
+)
 
 
 def twos_complement_bits(value: int, width: int) -> str:
@@ -51,54 +56,104 @@ def write_decimal_matrix(path: Path, matrix: list[list[int]]) -> None:
             f.write("\n")
 
 
-def write_tiled_inputs(case_dir: Path, a_matrix: list[list[int]], b_matrix: list[list[int]]) -> None:
+def remove_legacy_split_files(case_dir: Path) -> None:
+    for pattern in LEGACY_SPLIT_PATTERNS:
+        for path in case_dir.glob(pattern):
+            if path.is_file():
+                path.unlink()
+
+
+def write_tiled_inputs(
+    case_dir: Path,
+    a_matrix: list[list[int]],
+    b_matrix: list[list[int]],
+    write_legacy_split_files: bool,
+) -> None:
     m_tiles = MAT_M // VL
     k_tiles = MAT_K // VS
     n_tiles = MAT_N // AD
 
-    for m_tile in range(m_tiles):
-        row_base = m_tile * VL
-        for k_tile in range(k_tiles):
-            k_base = k_tile * VS
-            path = case_dir / f"vecA_tile{m_tile + 1}-{k_tile + 1}.txt"
-            with path.open("w", encoding="ascii") as f:
+    with (case_dir / "vecA_tiles.txt").open("w", encoding="ascii") as a_bundle:
+        for m_tile in range(m_tiles):
+            row_base = m_tile * VL
+            for k_tile in range(k_tiles):
+                k_base = k_tile * VS
+                split_file = None
+                if write_legacy_split_files:
+                    split_path = case_dir / f"vecA_tile{m_tile + 1}-{k_tile + 1}.txt"
+                    split_file = split_path.open("w", encoding="ascii")
                 for row_lane in range(VL):
                     values = a_matrix[row_base + row_lane][k_base:k_base + VS]
-                    f.write(pack_int8_vector(values))
-                    f.write("\n")
+                    line = pack_int8_vector(values)
+                    a_bundle.write(line)
+                    a_bundle.write("\n")
+                    if split_file is not None:
+                        split_file.write(line)
+                        split_file.write("\n")
+                if split_file is not None:
+                    split_file.close()
 
-    for n_tile in range(n_tiles):
-        col_base = n_tile * AD
-        for k_tile in range(k_tiles):
-            k_base = k_tile * VS
-            path = case_dir / f"vecB_stream{n_tile + 1}-{k_tile + 1}.txt"
-            with path.open("w", encoding="ascii") as f:
+    with (case_dir / "vecB_streams.txt").open("w", encoding="ascii") as b_bundle:
+        for n_tile in range(n_tiles):
+            col_base = n_tile * AD
+            for k_tile in range(k_tiles):
+                k_base = k_tile * VS
+                split_file = None
+                if write_legacy_split_files:
+                    split_path = case_dir / f"vecB_stream{n_tile + 1}-{k_tile + 1}.txt"
+                    split_file = split_path.open("w", encoding="ascii")
                 for col_lane in range(AD):
                     col = col_base + col_lane
                     values = [b_matrix[k_base + offset][col] for offset in range(VS)]
-                    f.write(pack_int8_vector(values))
-                    f.write("\n")
+                    line = pack_int8_vector(values)
+                    b_bundle.write(line)
+                    b_bundle.write("\n")
+                    if split_file is not None:
+                        split_file.write(line)
+                        split_file.write("\n")
+                if split_file is not None:
+                    split_file.close()
 
 
-def write_tiled_golden(case_dir: Path, c_matrix: list[list[int]]) -> None:
+def write_tiled_golden(
+    case_dir: Path,
+    c_matrix: list[list[int]],
+    write_legacy_split_files: bool,
+) -> None:
     m_tiles = MAT_M // VL
     n_tiles = MAT_N // AD
 
-    for m_tile in range(m_tiles):
-        row_base = m_tile * VL
-        for n_tile in range(n_tiles):
-            col_base = n_tile * AD
-            path = case_dir / f"C_golden_tile{m_tile + 1}-{n_tile + 1}.txt"
-            with path.open("w", encoding="ascii") as f:
+    with (case_dir / "C_golden_tiles.txt").open("w", encoding="ascii") as golden_bundle:
+        for m_tile in range(m_tiles):
+            row_base = m_tile * VL
+            for n_tile in range(n_tiles):
+                col_base = n_tile * AD
+                split_file = None
+                if write_legacy_split_files:
+                    split_path = case_dir / f"C_golden_tile{m_tile + 1}-{n_tile + 1}.txt"
+                    split_file = split_path.open("w", encoding="ascii")
                 for row_lane in range(VL):
                     row = row_base + row_lane
                     for col_lane in range(AD):
                         col = col_base + col_lane
-                        f.write(twos_complement_bits(c_matrix[row][col], INT24_WIDTH))
-                        f.write("\n")
+                        line = twos_complement_bits(c_matrix[row][col], INT24_WIDTH)
+                        golden_bundle.write(line)
+                        golden_bundle.write("\n")
+                        if split_file is not None:
+                            split_file.write(line)
+                            split_file.write("\n")
+                if split_file is not None:
+                    split_file.close()
 
 
-def generate_case(case_dir: Path, seed: int, low: int, high: int) -> None:
+def generate_case(
+    case_dir: Path,
+    seed: int,
+    low: int,
+    high: int,
+    write_legacy_split_files: bool,
+    clean_legacy_split_files: bool,
+) -> None:
     rng = random.Random(seed)
     case_dir.mkdir(parents=True, exist_ok=True)
 
@@ -109,8 +164,10 @@ def generate_case(case_dir: Path, seed: int, low: int, high: int) -> None:
     write_decimal_matrix(case_dir / "A.txt", a_matrix)
     write_decimal_matrix(case_dir / "B.txt", b_matrix)
     write_decimal_matrix(case_dir / "C_golden.txt", c_matrix)
-    write_tiled_inputs(case_dir, a_matrix, b_matrix)
-    write_tiled_golden(case_dir, c_matrix)
+    write_tiled_inputs(case_dir, a_matrix, b_matrix, write_legacy_split_files)
+    write_tiled_golden(case_dir, c_matrix, write_legacy_split_files)
+    if clean_legacy_split_files:
+        remove_legacy_split_files(case_dir)
 
 
 def main() -> None:
@@ -124,7 +181,17 @@ def main() -> None:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path(__file__).resolve().parent / "testcase" / "mac",
+        default=Path(__file__).resolve().parents[1] / "testcase" / "mac",
+    )
+    parser.add_argument(
+        "--legacy-split-files",
+        action="store_true",
+        help="Also write the old vecA_tile*/vecB_stream*/C_golden_tile* files.",
+    )
+    parser.add_argument(
+        "--keep-legacy-split-files",
+        action="store_true",
+        help="Do not remove existing old split testcase files when generating the bundled format.",
     )
     args = parser.parse_args()
 
@@ -133,7 +200,15 @@ def main() -> None:
 
     for pat_idx in range(args.patterns):
         case_dir = args.out_dir / f"pat{pat_idx}"
-        generate_case(case_dir, args.seed + pat_idx, args.value_min, args.value_max)
+        clean_legacy = not args.legacy_split_files and not args.keep_legacy_split_files
+        generate_case(
+            case_dir,
+            args.seed + pat_idx,
+            args.value_min,
+            args.value_max,
+            args.legacy_split_files,
+            clean_legacy,
+        )
         print(f"Wrote MAC testcase pat{pat_idx} to {case_dir}")
 
 

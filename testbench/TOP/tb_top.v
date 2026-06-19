@@ -28,15 +28,19 @@
 //       RTL/TOP/top.v testbench/TOP/tb_top.v
 //   vvp tb_top.vvp
 //
-// Gate sim driven by GLS/TOP/gate.f.
+// Gate sim driven by SYN/SYN_TOP/top_gls.f.
 
 `ifndef M_TILE_LIMIT
   `define M_TILE_LIMIT 1
 `endif
 
+`ifndef CYCLE
+  `define CYCLE 10.0
+`endif
+
 module tb_top;
 
-parameter real    CYCLE       = 10.0;
+parameter real    CYCLE       = `CYCLE;
 parameter integer MAT_M       = 1024;
 parameter integer MAT_K       = 64;
 parameter integer MAT_N       = 1024;
@@ -77,6 +81,7 @@ top dut (
 initial begin
     clk = 1'b0;
     forever #(CYCLE / 2.0) clk = ~clk;
+    $sdf_annotate("top_syn.sdf", dut);
 end
 
 integer cycle_count;

@@ -90,8 +90,14 @@ initial begin
 end
 
 reg [23:0] golden [0:15][0:15];
-integer i, j, fd;
+integer i, j;
 integer p;
+localparam integer A_TILE_WORDS = `M_TILE_NUM * `K_TILE_NUM * `VL;
+localparam integer B_TILE_WORDS = `N_TILE_NUM * `K_TILE_NUM * `AD;
+localparam integer G_TILE_WORDS = `M_TILE_NUM * `N_TILE_NUM * `VL * `AD;
+reg [255:0] A_tiles [0:A_TILE_WORDS-1];
+reg [255:0] B_streams [0:B_TILE_WORDS-1];
+reg [23:0]  G_tiles [0:G_TILE_WORDS-1];
 
 integer err;
 integer pass;
@@ -107,6 +113,53 @@ reg signed [23:0] first_fail_golden;
 reg [256*8-1:0] pathA;
 reg [256*8-1:0] pathB;
 reg [256*8-1:0] pathG;
+reg [256*8-1:0] path_primary;
+reg [256*8-1:0] path_fallback;
+integer a_base;
+integer b_base;
+integer g_base;
+
+task find_case_file;
+    input  [256*8-1:0] primary;
+    input  [256*8-1:0] fallback;
+    output [256*8-1:0] selected;
+    integer open_fd;
+    begin
+        selected = primary;
+        open_fd = $fopen(primary, "r");
+        if (open_fd == 0) begin
+            selected = fallback;
+            open_fd = $fopen(fallback, "r");
+        end
+        if (open_fd == 0) begin
+            $display("ERROR: cannot open testcase file:");
+            $display("  %0s", primary);
+            $display("  %0s", fallback);
+            $finish;
+        end
+        $fclose(open_fd);
+    end
+endtask
+
+task load_pattern_files;
+    input integer pat_idx;
+    begin
+        $sformat(path_primary, "testbench/testcase/mac/pat%0d/vecA_tiles.txt", pat_idx);
+        $sformat(path_fallback, "testcase/mac/pat%0d/vecA_tiles.txt", pat_idx);
+        find_case_file(path_primary, path_fallback, pathA);
+        $readmemb(pathA, A_tiles);
+
+        $sformat(path_primary, "testbench/testcase/mac/pat%0d/vecB_streams.txt", pat_idx);
+        $sformat(path_fallback, "testcase/mac/pat%0d/vecB_streams.txt", pat_idx);
+        find_case_file(path_primary, path_fallback, pathB);
+        $readmemb(pathB, B_streams);
+
+        $sformat(path_primary, "testbench/testcase/mac/pat%0d/C_golden_tiles.txt", pat_idx);
+        $sformat(path_fallback, "testcase/mac/pat%0d/C_golden_tiles.txt", pat_idx);
+        find_case_file(path_primary, path_fallback, pathG);
+        $readmemb(pathG, G_tiles);
+    end
+endtask
 
 initial begin
     $fsdbDumpfile("tile_gate.fsdb");
@@ -131,6 +184,7 @@ initial begin
     for (p = 0; p < `PAT_NUM; p = p + 1) begin
         $display("================================");
         $display("Start pat %0d", p);
+        load_pattern_files(p);
 
         rst_n = 0;
         @(posedge clk);
@@ -146,29 +200,20 @@ initial begin
                 rst_n = 1;
                 start = 1;
 
-                $sformat(pathG, "testbench/testcase/mac/pat%0d/C_golden_tile%0d-%0d.txt", p, step4, step3);
-                fd = $fopen(pathG, "r");
-                if (fd == 0)
-                    $sformat(pathG, "testcase/mac/pat%0d/C_golden_tile%0d-%0d.txt", p, step4, step3);
-                else
-                    $fclose(fd);
-                $readmemb(pathG, golden);
+                g_base = (((step4 - 1) * `N_TILE_NUM) + (step3 - 1)) * `VL * `AD;
+                for (i = 0; i < 16; i = i + 1) begin
+                    for (j = 0; j < 16; j = j + 1) begin
+                        golden[i][j] = G_tiles[g_base + (i * `AD) + j];
+                    end
+                end
 
                 for (step2 = 1; step2 <= `K_TILE_NUM; step2 = step2 + 1) begin
-                    $sformat(pathA, "testbench/testcase/mac/pat%0d/vecA_tile%0d-%0d.txt", p, step4, step2);
-                    $sformat(pathB, "testbench/testcase/mac/pat%0d/vecB_stream%0d-%0d.txt", p, step3, step2);
-                    fd = $fopen(pathA, "r");
-                    if (fd == 0)
-                        $sformat(pathA, "testcase/mac/pat%0d/vecA_tile%0d-%0d.txt", p, step4, step2);
-                    else
-                        $fclose(fd);
-                    fd = $fopen(pathB, "r");
-                    if (fd == 0)
-                        $sformat(pathB, "testcase/mac/pat%0d/vecB_stream%0d-%0d.txt", p, step3, step2);
-                    else
-                        $fclose(fd);
-                    $readmemb(pathA, Amem);
-                    $readmemb(pathB, Bmem);
+                    a_base = (((step4 - 1) * `K_TILE_NUM) + (step2 - 1)) * `VL;
+                    b_base = (((step3 - 1) * `K_TILE_NUM) + (step2 - 1)) * `AD;
+                    for (i = 0; i < 16; i = i + 1) begin
+                        Amem[i] = A_tiles[a_base + i];
+                        Bmem[i] = B_streams[b_base + i];
+                    end
 
                     for (i = 0; i < 16; i = i + 1) begin
                         vecB <= Bmem[i];
